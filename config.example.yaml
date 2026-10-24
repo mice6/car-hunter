@@ -1,0 +1,40 @@
+# Skopiuj do config.yaml i dostosuj.
+
+criteria:
+  min_power_hp: 170
+  gearbox: automatic            # tylko automat
+  budget_total_pln: 55000       # zakup + naprawa + opłaty
+  max_purchase_pln: 50000       # górna cena ogłoszenia przy scrapowaniu
+  min_year: 2010
+  exclude_rhd: true
+  preferred_bodies: [suv, combi]   # premia, nie wymóg
+  preferred_fuels: [diesel]        # premia, nie wymóg
+
+scoring:
+  asking_to_transaction: 0.93     # ceny ofertowe zdrowych aut są zawyżone ~7%
+  damage_history_discount: 0.0    # auto dla siebie -> 0; przy odsprzedaży ~0.12
+  pref_bonus_pln: 3000            # premia za każde trafienie w preferencje
+  fees:
+    pcc_rate: 0.02
+    registration_inspection_pln: 1000
+    transport_pln: 800
+    unregistered_import_pln: 1500  # tłumaczenia, badanie, rejestracja auta sprowadzonego
+  min_score_alert_pln: 8000        # alert, gdy skorygowana oszczędność >= tej kwoty
+  min_comparables: 5
+
+scraper:
+  delay_min_s: 2.5
+  delay_max_s: 6.0
+  candidate_max_pages: 120         # przy pełnym przebiegu
+  incremental_known_pages_stop: 2  # tryb przyrostowy: stop po N stronach samych znanych ogłoszeń
+  market_max_pages_per_model: 15
+  market_refresh_hours: 72
+  market_year_span: 2              # rocznik kandydata ±2
+  market_min_power_hp: 120         # zdrowe auta do wyceny (szerzej niż kryterium, lepszy model)
+  eur_pln: 4.25
+  sources: [otomoto, olx]
+
+schedule:
+  candidates_every_min: 30
+  full_sweep_every_hours: 24
+  market_every_hours: 24
