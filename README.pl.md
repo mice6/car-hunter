@@ -29,7 +29,7 @@ candidates  →  enrich  →  market  →  evaluate  →  alert
 ## Uruchomienie (Docker LXC na Proxmoxie)
 
 ```bash
-git clone <repo> car-hunter && cd car-hunter
+git clone https://github.com/mice6/car-hunter.git && cd car-hunter
 cp config.example.yaml config.yaml
 cp .env.example .env         # hasło do bazy + token bota Telegram i chat_id
 docker compose up -d --build

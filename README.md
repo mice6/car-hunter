@@ -61,7 +61,7 @@ Set in `config.yaml` (copy it from `config.example.yaml`):
 Requires Docker with Compose. Runs well in a Proxmox LXC or on any small home server.
 
 ```bash
-git clone https://github.com/<you>/car-hunter.git && cd car-hunter
+git clone https://github.com/mice6/car-hunter.git && cd car-hunter
 cp config.example.yaml config.yaml
 cp .env.example .env          # DB password, Telegram bot token and chat id
 docker compose up -d --build
