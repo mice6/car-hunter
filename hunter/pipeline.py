@@ -241,6 +241,14 @@ def run_vision(cfg: Config, conn, limit: int | None = None, listing_id: int | No
     v = cfg.vision
     if listing_id is not None:
         rows = conn.execute("SELECT * FROM listings WHERE id = %s", (listing_id,)).fetchall()
+        if rows and rows[0]["source"] == "otomoto" and rows[0]["enriched_at"] is None:
+            log.info("vision: fetching full listing (photos) first")
+            d = otomoto.fetch_detail(make_http(cfg), rows[0]["url"])
+            if d:
+                db.apply_detail(conn, listing_id, d)
+                rows = conn.execute("SELECT * FROM listings WHERE id = %s", (listing_id,)).fetchall()
+        if rows and len(rows[0]["photos"] or []) < v["min_photos"]:
+            log.warning("vision: listing %s has only %d photos", listing_id, len(rows[0]["photos"] or []))
     else:
         used = conn.execute("SELECT count(*) AS n FROM listings WHERE vision_at > now() - interval '1 day'").fetchone()["n"]
         room = max(0, v["max_per_day"] - used)
