@@ -101,8 +101,16 @@ def test_vision_prefilter_and_save(conn, monkeypatch):
                 "confidence": 0.9, "notes_pl": "ok"}
 
     monkeypatch.setattr(vmod, "analyze", fake_analyze)
+    fetched = []
+
+    def fake_detail(http, url):   # nie wzbogacone ogłoszenie z kolejki: dociągnięte, ale ma 2 zdjęcia -> pominięte
+        fetched.append(url)
+        return {"photos": ["a/image", "b/image"], "description": "ok", "active": True}
+
+    monkeypatch.setattr(pipeline.otomoto, "fetch_detail", fake_detail)
     assert pipeline.run_vision(cfg, conn)["ok"] == 1
     assert seen == [good]
+    assert fetched == ["https://www.otomoto.pl/oferta/21"]
     row = conn.execute("SELECT vision, vision_at FROM listings WHERE id=%s", (good,)).fetchone()
     assert row["vision"]["notes_pl"] == "ok" and row["vision_at"]
     assert pipeline.run_vision(cfg, conn) == {"queued": 0}   # nie powtarza

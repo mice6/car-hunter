@@ -104,11 +104,11 @@ def scrape_candidates(cfg: Config, conn, http: Http, full: bool = False) -> dict
 
 def enrich(cfg: Config, conn, http: Http, limit: int = 200) -> int:
     rows = conn.execute(
-        """SELECT id, url FROM listings
-           WHERE kind='candidate' AND active AND source='otomoto'
-             AND (enriched_at IS NULL OR enriched_at < now() - interval '3 days')
-             AND price_pln <= %s
-           ORDER BY enriched_at NULLS FIRST, first_seen DESC LIMIT %s""",
+        """SELECT l.id, l.url FROM listings l LEFT JOIN evaluations e ON e.listing_id = l.id
+           WHERE l.kind='candidate' AND l.active AND l.source='otomoto'
+             AND (l.enriched_at IS NULL OR l.enriched_at < now() - interval '3 days')
+             AND l.price_pln <= %s
+           ORDER BY l.enriched_at NULLS FIRST, e.score DESC NULLS LAST, l.first_seen DESC LIMIT %s""",
         (cfg.criteria["max_purchase_pln"], limit)).fetchall()
     done = 0
     for r in rows:
@@ -215,8 +215,7 @@ VISION_SQL = """
 SELECT l.*, e.market_value AS ev_market, e.fees AS ev_fees
 FROM listings l JOIN evaluations e ON e.listing_id = l.id
 WHERE l.kind = 'candidate' AND l.active
-  AND jsonb_array_length(l.photos) >= %(min_photos)s
-  AND (l.source = 'olx' OR l.enriched_at IS NOT NULL)
+  AND (jsonb_array_length(l.photos) >= %(min_photos)s OR (l.source = 'otomoto' AND l.enriched_at IS NULL))
   AND (l.vision IS NULL OR (l.vision ? '_error' AND l.vision_at < now() - interval '1 day'))
   AND (e.details->>'criteria_ok')::boolean
   AND e.market_value IS NOT NULL
@@ -233,6 +232,34 @@ def vision_config(cfg: Config):
     return VisionConfig(api_key=cfg.runpod_api_key, endpoint_id=cfg.runpod_endpoint_id, model=v["model"],
                         max_images=v["max_images"], image_size=v["image_size"], timeout_s=v["timeout_s"],
                         concurrency=v["concurrency"], inline_images=v.get("inline_images", True))
+
+
+def _ensure_details(cfg: Config, conn, rows: list[dict], min_photos: int) -> list[dict]:
+    """Ogłoszenia OtoMoto z kolejki bez szczegółów: dociągnij zdjęcia/opis i sprawdź pułapki jeszcze raz."""
+    from .scoring import criteria_failures
+    http = None
+    out = []
+    for r in rows:
+        if r["source"] == "otomoto" and r["enriched_at"] is None:
+            http = http or make_http(cfg)
+            try:
+                d = otomoto.fetch_detail(http, r["url"])
+            except Exception as e:  # noqa: BLE001
+                log.warning("vision: detail %s failed: %s", r["url"], e)
+                continue
+            if not d:
+                continue
+            db.apply_detail(conn, r["id"], d)
+            fresh = conn.execute("SELECT * FROM listings WHERE id = %s", (r["id"],)).fetchone()
+            r = {**r, **fresh}
+            fails = criteria_failures(r, cfg.criteria)
+            if fails:
+                log.info("vision: skip %s after details: %s", r["id"], fails)
+                continue
+        if len(r["photos"] or []) < min_photos:
+            continue
+        out.append(r)
+    return out
 
 
 def run_vision(cfg: Config, conn, limit: int | None = None, listing_id: int | None = None,
@@ -263,6 +290,8 @@ def run_vision(cfg: Config, conn, limit: int | None = None, listing_id: int | No
             "min_photos": v["min_photos"],
             "min_opt": v["min_optimistic_savings_pln"], "budget": cfg.criteria["budget_total_pln"], "limit": n,
         }).fetchall()
+    if not dry and listing_id is None:
+        rows = _ensure_details(cfg, conn, rows, v["min_photos"])
     if dry:
         return {"queue": [{"id": r["id"], "title": r["title"], "price": float(r["price_pln"]),
                            "market": float(r["ev_market"]) if r.get("ev_market") else None,
