@@ -100,13 +100,14 @@ def test_traps_and_price_ratio():
     base = {"price_pln": 30000, "power_hp": 250, "gearbox": "automatic", "title": "BMW X5", "description": ""}
     v = Valuation(150000, "t", 30)
     cheap = evaluate(dict(base, price_pln=9000), v, CFG.criteria, CFG.scoring)
-    assert not cheap.passes_filters and any("podejrzanie niska" in r for r in cheap.details["reasons"])
+    assert not cheap.passes_filters and any("wrak" in r for r in cheap.details["reasons"])
     assert not cheap.details["criteria_ok"]
     for desc, reason in [("Sprzedam w całości na części", "na części"), ("Cesja leasingu, odstępne 20 tys", "cesja"),
                          ("Auto bez dokumentów", "bez dokumentów")]:
         ev = evaluate(dict(base, description=desc), v, CFG.criteria, CFG.scoring)
         assert any(reason in r for r in ev.details["reasons"]), (desc, ev.details["reasons"])
-    ok = evaluate(dict(base, description="Auto z leasingu, serwisowane w ASO, części z ASO"), v, CFG.criteria, CFG.scoring)
+    ok = evaluate(dict(base, price_pln=60000, description="Auto z leasingu, serwisowane w ASO, części z ASO"), v,
+                  CFG.criteria, CFG.scoring)
     assert ok.details["criteria_ok"], ok.details["reasons"]
     few = evaluate(dict(base, enriched_at="x", photos=["a"]), v, CFG.criteria, CFG.scoring)
     assert any("za mało zdjęć" in r for r in few.details["reasons"])
@@ -125,3 +126,18 @@ def test_no_registration_and_no_engine():
     ev = evaluate(dict(base, description="auto bez prawa rej. oraz bez silnika"), v, CFG.criteria, CFG.scoring)
     r = " ".join(ev.details["reasons"])
     assert "prawa rejestracji" in r and "brak silnika" in r
+
+
+def test_damage_limits_after_vision():
+    v = {"parts": [], "damage_zones": [{"zone": "front", "severity": "heavy"}], "photos_cover": {},
+         "airbags_deployed": "yes", "structural_damage": "likely", "overall_severity": "heavy",
+         "drivable": "no", "flood_signs": "no", "fire_signs": "no", "confidence": 0.9, "notes_pl": "x",
+         "mechanical_issues": []}
+    base = {"price_pln": 40000, "power_hp": 250, "gearbox": "automatic", "title": "x", "description": "", "vision": v}
+    ev = evaluate(base, Valuation(80000, "t", 30), CFG.criteria, CFG.scoring)
+    r = ev.details["reasons"]
+    assert "poduszki wystrzelone" in r and "uszkodzona konstrukcja" in r and any("zbyt duża" in x for x in r)
+    loose = dict(CFG.criteria, max_damage="heavy", exclude_airbags=False, exclude_structural=False)
+    assert evaluate(base, Valuation(80000, "t", 30), loose, CFG.scoring).details["criteria_ok"]
+    cheap = evaluate(dict(base, price_pln=25000, vision=None), Valuation(80000, "t", 30), CFG.criteria, CFG.scoring)
+    assert any("wrak" in x for x in cheap.details["reasons"])   # 31% < 35%

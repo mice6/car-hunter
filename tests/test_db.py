@@ -71,6 +71,7 @@ def test_evaluate_all_and_top(conn):
                                  "active": True})
     db.upsert_listing(conn, _item(11, price=49000), "candidate", 4.25)
     cfg = load_config("/nonexistent.yaml")
+    cfg.data["criteria"]["min_price_ratio"] = 0.2   # dane testowe mają duże rabaty
     stats = pipeline.evaluate_all(cfg, conn)
     assert stats["passing"] >= 1
     rows = pipeline.top(conn, 5)
@@ -90,6 +91,7 @@ def test_vision_prefilter_and_save(conn, monkeypatch):
     pricey, _ = db.upsert_listing(conn, _item(22, price=52000), "candidate", 4.25)
     db.apply_detail(conn, pricey, {"photos": ["x"] * 8, "active": True})
     cfg = load_config("/nonexistent.yaml")
+    cfg.data["criteria"]["min_price_ratio"] = 0.2   # dane testowe mają duże rabaty
     cfg.runpod_api_key, cfg.runpod_endpoint_id = "k", "e"
     pipeline.evaluate_all(cfg, conn)
 
@@ -133,6 +135,7 @@ def test_vision_queue_skips_cars_that_cannot_fit_budget(conn):
     for lid in (pricey, fits):
         db.apply_detail(conn, lid, {"photos": ["x"] * 8, "active": True})
     cfg = load_config("/nonexistent.yaml")
+    cfg.data["criteria"]["min_price_ratio"] = 0.2   # dane testowe mają duże rabaty
     pipeline.evaluate_all(cfg, conn)
     ids = [q["id"] for q in pipeline.run_vision(cfg, conn, dry=True)["queue"]]
     assert ids == [fits]

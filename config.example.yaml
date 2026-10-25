@@ -23,6 +23,13 @@ criteria:
   exclude_unregistered: false   # true = tylko auta zarejestrowane w PL
   min_photos: 3                 # mniej zdjęć = nie da się ocenić
   exclude_missing_powertrain: true   # "bez silnika", "brak skrzyni"
+  min_price_ratio: 0.35         # cena < 35% wartości zdrowego = prawie zawsze wrak -> pomijaj
+  # limity szkody (działają po ocenie zdjęć)
+  max_damage: moderate          # light | moderate | heavy
+  exclude_airbags: true
+  exclude_structural: true
+  exclude_not_drivable: false
+  exclude_flood_fire: true
 
 # Preferencje (miękkie): premia do score, nie wykluczają.
 preferences:
@@ -42,7 +49,6 @@ scoring:
   min_score_alert_pln: 8000        # alert, gdy skorygowana oszczędność >= tej kwoty
   min_comparables: 5
   valuation_year_window: 2         # wycena tylko z aut ±2 roczniki
-  min_price_ratio: 0.2             # cena < 20% rynku = wrak/części/licytacja -> odrzuć
   implied_damage_share: 0.5        # bez zdjęć: 50% różnicy cena-rynek traktuj jako szkodę
   vision_min_gap_share: 0.25       # ze zdjęciami: naprawa nie mniej niż 25% różnicy cena-rynek
 

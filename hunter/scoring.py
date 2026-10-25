@@ -289,6 +289,29 @@ def criteria_failures(listing: dict, crit: dict) -> list[str]:
     return out
 
 
+SEVERITY_ORDER = {"light": 1, "medium": 2, "severe": 3}
+
+
+def damage_failures(vision: dict | None, dmg: "DamageAssessment", crit: dict) -> list[str]:
+    """Twarde limity szkody - działają tylko, gdy auto ma ocenę ze zdjęć."""
+    if not vision or "_error" in vision or dmg.source != "vision":
+        return []
+    out = []
+    max_sev = {"light": 1, "moderate": 2, "medium": 2, "heavy": 3}.get(str(crit.get("max_damage", "heavy")), 3)
+    if SEVERITY_ORDER.get(dmg.severity, 2) > max_sev:
+        out.append(f"szkoda zbyt duża ({dmg.severity})")
+    if crit.get("exclude_airbags") and vision.get("airbags_deployed") in ("yes", "likely"):
+        out.append("poduszki wystrzelone")
+    if crit.get("exclude_structural") and vision.get("structural_damage") in ("yes", "likely"):
+        out.append("uszkodzona konstrukcja")
+    if crit.get("exclude_not_drivable") and vision.get("drivable") == "no":
+        out.append("nie jeździ")
+    if crit.get("exclude_flood_fire") and (vision.get("flood_signs") in ("yes", "likely")
+                                           or vision.get("fire_signs") in ("yes", "likely")):
+        out.append("zalanie/pożar")
+    return out
+
+
 def evaluate(listing: dict, valuation: Valuation, crit: dict, sc: dict, prefs: dict | None = None) -> Evaluation:
     price = float(listing["price_pln"]) if listing.get("price_pln") is not None else None
     dmg = assess_damage(listing, valuation.value)
@@ -305,8 +328,10 @@ def evaluate(listing: dict, valuation: Valuation, crit: dict, sc: dict, prefs: d
     # Cena ułamkiem rynku = prawie zawsze wrak, części, licytacja albo fałszywa cena.
     ratio = price / valuation.value
     details["price_ratio"] = round(ratio, 3)
-    if ratio < sc.get("min_price_ratio", 0.2):
-        reasons.append(f"podejrzanie niska cena ({ratio:.0%} rynku)")
+    min_ratio = crit.get("min_price_ratio", sc.get("min_price_ratio", 0.2))
+    if ratio < min_ratio:
+        reasons.append(f"za tanio = wrak ({ratio:.0%} rynku)")
+    reasons.extend(damage_failures(listing.get("vision"), dmg, crit))
     details["criteria_ok"] = not reasons
 
     market = valuation.value * sc["asking_to_transaction"] * (1 - sc.get("damage_history_discount", 0))
