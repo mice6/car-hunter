@@ -110,3 +110,5 @@ def test_vision_prefilter_and_save(conn, monkeypatch):
     src = conn.execute("SELECT details->'damage'->>'source' AS s FROM evaluations WHERE listing_id=%s", (good,)).fetchone()
     assert src["s"] == "vision"
     assert few != good and pricey != good
+    q = pipeline.run_vision(cfg, conn, dry=True)
+    assert q == {"queue": []}

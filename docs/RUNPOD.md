@@ -68,7 +68,16 @@ docker compose run --rm hunter top -n 10            # pick an id
 docker compose run --rm hunter vision --id 123      # assess one listing, print JSON + estimate
 ```
 
-From then on every cycle runs: `evaluate → vision (queue) → evaluate → alert`.
+By default photo assessment is **manual only** (`vision.auto: false`): nothing is sent unless
+you run `hunter vision`. Preview the queue first, at no cost:
+
+```bash
+docker compose run --rm hunter vision --dry --limit 5
+docker compose run --rm hunter vision --limit 3
+```
+
+After checking cost and quality, set `vision.auto: true`. Every cycle then runs
+`evaluate → vision (queue) → evaluate → alert`, within `max_per_run` and `max_per_day`.
 
 ## What is sent
 
@@ -81,8 +90,8 @@ Only listings that can still be a deal:
 - not assessed yet (errors are retried after 24 h).
 
 The queue is ordered by price gap to market and capped by `vision.max_per_run` and
-`vision.max_per_day`. With `vision.require_for_alert: true`, Telegram alerts are sent only for
-listings assessed from photos.
+`vision.max_per_day`. With `vision.auto: true` and `vision.require_for_alert: true`, Telegram alerts are sent only
+for listings assessed from photos.
 
 ## How the estimate is built
 

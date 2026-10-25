@@ -151,10 +151,12 @@ def fetch_detail(http: Http, url: str) -> dict | None:
 def candidate_filters(crit: dict) -> dict:
     return {
         "filter_enum_damaged": "1",
-        "filter_enum_gearbox": crit.get("gearbox", "automatic"),
+        "filter_enum_gearbox": crit.get("gearbox"),
         "filter_float_engine_power:from": crit["min_power_hp"],
         "filter_float_price:to": crit["max_purchase_pln"],
         "filter_float_year:from": crit.get("min_year"),
+        "filter_float_year:to": crit.get("max_year"),
+        "filter_float_mileage:to": crit.get("max_mileage_km"),
         "order": "created_at_first:desc",
     }
 

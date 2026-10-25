@@ -34,6 +34,10 @@ class Config:
         return self.data["criteria"]
 
     @property
+    def preferences(self) -> dict:
+        return self.data.get("preferences") or {}
+
+    @property
     def scoring(self) -> dict:
         return self.data["scoring"]
 
@@ -48,6 +52,10 @@ class Config:
     @property
     def vision_enabled(self) -> bool:
         return bool(self.runpod_api_key and self.runpod_endpoint_id)
+
+    @property
+    def vision_auto(self) -> bool:
+        return self.vision_enabled and bool(self.vision.get("auto", False))
 
     @property
     def schedule(self) -> dict:
@@ -69,4 +77,5 @@ def load_config(path: str | None = None) -> Config:
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID") or None,
         runpod_api_key=os.environ.get("RUNPOD_API_KEY") or None,
         runpod_endpoint_id=os.environ.get("RUNPOD_ENDPOINT_ID") or None,
+        extra={"path": path},
     )

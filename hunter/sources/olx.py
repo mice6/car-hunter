@@ -99,7 +99,7 @@ def search(http: Http, base_params: dict, makes: dict[int, str], price_from: int
         lo, hi = max(a, price_from), min(b, price_to)
         offset = 0
         while offset < MAX_OFFSET:
-            params = dict(base_params)
+            params = {k: v for k, v in base_params.items() if v is not None}
             params.update({"offset": offset, "limit": PAGE,
                            "filter_float_price:from": lo, "filter_float_price:to": hi})
             total, data = _query(http, params)
@@ -116,13 +116,14 @@ def candidate_params(crit: dict) -> dict:
     p = {
         "category_id": CARS_CATEGORY,
         "filter_enum_condition[0]": "damaged",
-        "filter_enum_transmission[0]": crit.get("gearbox", "automatic"),
+        "filter_enum_transmission[0]": crit.get("gearbox"),
         "filter_float_enginepower:from": crit["min_power_hp"],
+        "filter_float_year:from": crit.get("min_year"),
+        "filter_float_year:to": crit.get("max_year"),
+        "filter_float_milage:to": crit.get("max_mileage_km"),
         "sort_by": "created_at:desc",
     }
-    if crit.get("min_year"):
-        p["filter_float_year:from"] = crit["min_year"]
-    return p
+    return {k: v for k, v in p.items() if v is not None}
 
 
 def market_params(category_id: int, model: str, gearbox: str, year_from: int, year_to: int, min_power: int) -> dict:

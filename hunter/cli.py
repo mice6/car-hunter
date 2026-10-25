@@ -61,8 +61,13 @@ def _mark(conn, key: str) -> None:
 
 
 def run_loop(cfg, conn):
-    sch = cfg.schedule
+    config_path = cfg.extra.get("path")
     while True:
+        try:
+            cfg = load_config(config_path)  # zmiany w config.yaml bez restartu
+        except Exception:
+            log.exception("config.yaml invalid, keeping previous config")
+        sch = cfg.schedule
         started = time.monotonic()
         http = pipeline.make_http(cfg)
         try:
@@ -74,7 +79,7 @@ def run_loop(cfg, conn):
                 db.deactivate_stale(conn, "market", 24 * 14)
                 _mark(conn, "last_market")
             pipeline.evaluate_all(cfg, conn)
-            if cfg.vision_enabled:
+            if cfg.vision_auto:
                 pipeline.run_vision(cfg, conn)
                 pipeline.evaluate_all(cfg, conn)
             pipeline.alert(cfg, conn)
@@ -101,6 +106,7 @@ def main(argv=None):
     vi = sub.add_parser("vision", help="oceń zdjęcia kandydatów modelem na RunPod")
     vi.add_argument("--limit", type=int)
     vi.add_argument("--id", type=int, help="tylko jedno ogłoszenie (id z bazy) i wypisz wynik")
+    vi.add_argument("--dry", action="store_true", help="pokaż kolejkę, nic nie wysyłaj")
     sub.add_parser("alert", help="wyślij alerty Telegram")
     t = sub.add_parser("top", help="pokaż najlepszych kandydatów")
     t.add_argument("-n", type=int, default=20)
@@ -125,8 +131,16 @@ def main(argv=None):
     elif args.cmd == "evaluate":
         print(pipeline.evaluate_all(cfg, conn))
     elif args.cmd == "vision":
-        print(pipeline.run_vision(cfg, conn, args.limit, args.id))
-        if args.id is not None:
+        res = pipeline.run_vision(cfg, conn, args.limit, args.id, dry=args.dry)
+        if args.dry:
+            for q in res.get("queue", []):
+                print(f"[id {q['id']}] {q['title'][:45]:<45} cena {fmt_pln(q['price'])} | rynek {fmt_pln(q['market'])}"
+                      f" | {q['photos']} zdjęć\n    {q['url']}")
+            if not res.get("queue"):
+                print("Kolejka pusta.")
+        else:
+            print(res)
+        if args.id is not None and not args.dry:
             pipeline.evaluate_all(cfg, conn)
             _print_vision(conn, args.id)
     elif args.cmd == "alert":

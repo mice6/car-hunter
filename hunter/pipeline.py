@@ -48,28 +48,50 @@ def _incremental_stopper(conn, source: str, pages_needed: int):
     return stop
 
 
+def search_targets(crit: dict) -> list[tuple[str | None, str | None]]:
+    models = [m.strip().lower() for m in crit.get("include_models") or [] if "/" in m]
+    if models:
+        return [tuple(m.split("/", 1)) for m in models]
+    makes = [m.strip().lower() for m in crit.get("include_makes") or []]
+    if makes:
+        return [(m, None) for m in makes]
+    return [(None, None)]
+
+
 def scrape_candidates(cfg: Config, conn, http: Http, full: bool = False) -> dict:
     crit, s = cfg.criteria, cfg.scraper
     stats = defaultdict(int)
     eur = s["eur_pln"]
 
+    targets = search_targets(crit)  # [(make|None, model|None)] - zawężenie wyszukiwania z include_*
+
     if "otomoto" in s["sources"]:
-        stopper = None if full else _incremental_stopper(conn, "otomoto", s["incremental_known_pages_stop"])
-        # stopper musi widzieć stan PRZED zapisem strony -> sprawdzamy w generatorze przed upsertem
-        for item in otomoto.search(http, otomoto.candidate_filters(crit), s["candidate_max_pages"],
-                                   stop_when_known=stopper):
-            _, new = db.upsert_listing(conn, item, "candidate", eur)
-            stats["otomoto_new" if new else "otomoto_seen"] += 1
+        for make, model in targets:
+            path = "/osobowe" + (f"/{make}" if make else "") + (f"/{model}" if model else "")
+            stopper = None if full else _incremental_stopper(conn, "otomoto", s["incremental_known_pages_stop"])
+            for item in otomoto.search(http, otomoto.candidate_filters(crit), s["candidate_max_pages"], path=path,
+                                       stop_when_known=stopper):
+                _, new = db.upsert_listing(conn, item, "candidate", eur)
+                stats["otomoto_new" if new else "otomoto_seen"] += 1
 
     if "olx" in s["sources"]:
         makes = olx_makes(conn, http)
-        stopper = None if full else _incremental_stopper(conn, "olx", 1)
-        for item in olx.search(http, olx.candidate_params(crit), makes, 0, crit["max_purchase_pln"],
-                               stop_when_known=stopper):
-            if (item.get("power_hp") or 0) < crit["min_power_hp"]:
-                continue
-            _, new = db.upsert_listing(conn, item, "candidate", eur)
-            stats["olx_new" if new else "olx_seen"] += 1
+        by_slug = {v: k for k, v in makes.items()}
+        for make, model in targets:
+            params = olx.candidate_params(crit)
+            if make:
+                if make not in by_slug:
+                    log.warning("olx: unknown make %s", make)
+                    continue
+                params["category_id"] = by_slug[make]
+            if model:
+                params["filter_enum_model[0]"] = model
+            stopper = None if full else _incremental_stopper(conn, "olx", 1)
+            for item in olx.search(http, params, makes, 0, crit["max_purchase_pln"], stop_when_known=stopper):
+                if (item.get("power_hp") or 0) < crit["min_power_hp"]:
+                    continue
+                _, new = db.upsert_listing(conn, item, "candidate", eur)
+                stats["olx_new" if new else "olx_seen"] += 1
 
     if full:
         stats["deactivated"] = db.deactivate_stale(conn, "candidate", 26)
@@ -165,7 +187,7 @@ def evaluate_all(cfg: Config, conn) -> dict:
                      AND last_seen > now() - interval '60 days' AND price_pln > 3000""",
                 key).fetchall()
         val = value_from_comparables(c, comps_cache[key], cfg.scoring["min_comparables"])
-        ev = evaluate(c, val, cfg.criteria, cfg.scoring)
+        ev = evaluate(c, val, cfg.criteria, cfg.scoring, cfg.preferences)
         conn.execute(
             """INSERT INTO evaluations (listing_id, market_value, valuation_method, comparables_n, repair_estimate,
                    fees, total_cost, savings, risk, score, passes_filters, details, evaluated_at)
@@ -193,8 +215,7 @@ WHERE l.kind = 'candidate' AND l.active
   AND jsonb_array_length(l.photos) >= %(min_photos)s
   AND (l.source = 'olx' OR l.enriched_at IS NOT NULL)
   AND (l.vision IS NULL OR (l.vision ? '_error' AND l.vision_at < now() - interval '1 day'))
-  AND COALESCE(l.rhd, false) = false
-  AND l.power_hp >= %(min_power)s
+  AND (e.details->>'criteria_ok')::boolean
   AND e.market_value IS NOT NULL
   AND e.market_value - (l.price_pln + COALESCE(e.fees, 0) + 2500) >= %(min_opt)s
   AND l.price_pln + COALESCE(e.fees, 0) + 2500 <= %(budget)s
@@ -211,9 +232,10 @@ def vision_config(cfg: Config):
                         concurrency=v["concurrency"])
 
 
-def run_vision(cfg: Config, conn, limit: int | None = None, listing_id: int | None = None) -> dict:
+def run_vision(cfg: Config, conn, limit: int | None = None, listing_id: int | None = None,
+               dry: bool = False) -> dict:
     from .vision import analyze_many
-    if not cfg.vision_enabled:
+    if not cfg.vision_enabled and not dry:
         log.info("vision: RUNPOD_API_KEY/RUNPOD_ENDPOINT_ID not set, skipping")
         return {"skipped": True}
     v = cfg.vision
@@ -227,9 +249,13 @@ def run_vision(cfg: Config, conn, limit: int | None = None, listing_id: int | No
             log.info("vision: daily limit reached (%d)", used)
             return {"daily_limit": True}
         rows = conn.execute(VISION_SQL, {
-            "min_photos": v["min_photos"], "min_power": cfg.criteria["min_power_hp"],
+            "min_photos": v["min_photos"],
             "min_opt": v["min_optimistic_savings_pln"], "budget": cfg.criteria["budget_total_pln"], "limit": n,
         }).fetchall()
+    if dry:
+        return {"queue": [{"id": r["id"], "title": r["title"], "price": float(r["price_pln"]),
+                           "market": float(r["ev_market"]) if r.get("ev_market") else None,
+                           "photos": len(r["photos"] or []), "url": r["url"]} for r in rows]}
     if not rows:
         return {"queued": 0}
     log.info("vision: analysing %d listings", len(rows))
@@ -259,7 +285,7 @@ def alert(cfg: Config, conn, max_alerts: int = 10) -> int:
         log.info("telegram not configured, skipping alerts")
         return 0
     extra = "AND e.alerted_at IS NULL AND e.score >= %s"
-    if cfg.vision_enabled and cfg.vision.get("require_for_alert", True):
+    if cfg.vision_auto and cfg.vision.get("require_for_alert", True):
         extra += " AND e.details->'damage'->>'source' = 'vision'"
     rows = conn.execute(
         TOP_SQL.format(extra=extra),

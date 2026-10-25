@@ -43,18 +43,35 @@ score   = savings × (1 − risk) + preference bonus
 
 The 0.93 factor converts asking prices into realistic transaction prices.
 
-## Default criteria
+## Search criteria
 
-Set in `config.yaml` (copy it from `config.example.yaml`):
+Everything is configured in `config.yaml` (copy it from `config.example.yaml`). Changes take effect
+on the next cycle, with no container restart.
 
-| Setting | Default |
-|---|---|
-| Gearbox | automatic only |
-| Engine power | ≥ 170 HP |
-| Total budget (purchase + repair + fees) | 55 000 PLN |
-| Max asking price | 50 000 PLN |
-| Preferred (bonus, not required) | SUV / estate, diesel |
-| Excluded | right-hand drive |
+**Requirements (hard filters).** A listing that fails any of these gets no alert and is never sent
+to RunPod. An empty list means no restriction.
+
+| Setting | Default | Notes |
+|---|---|---|
+| `min_power_hp` | 170 | |
+| `gearbox` | `automatic` | `automatic`, `manual` or `null` |
+| `budget_total_pln` | 55 000 | purchase + repair + fees |
+| `max_purchase_pln` | 50 000 | applied when fetching |
+| `min_year` / `max_year` | 2010 / – | |
+| `max_mileage_km` | – | |
+| `fuels`, `bodies` | `[]` | e.g. `[diesel]`, `[suv, combi]` |
+| `include_makes` / `exclude_makes` | `[]` | OtoMoto URL slugs, e.g. `[kia, volvo]` |
+| `include_models` / `exclude_models` | `[]` | `make/model`, e.g. `[kia/stinger, volvo/xc60]` |
+| `regions` | `[]` | voivodeships, e.g. `[Dolnośląskie, Lubuskie]` |
+| `exclude_rhd` | `true` | |
+| `exclude_us_imports` | `false` | skip Copart/IAAI cars |
+| `exclude_unregistered` | `false` | only cars registered in Poland |
+
+`include_makes` and `include_models` also narrow the scraping itself: only those makes and models
+are fetched, which is faster and puts less load on the sites.
+
+**Preferences (soft).** These add a score bonus but never exclude a car: `preferences.bodies`
+(default `[suv, combi]`), `preferences.fuels` (default `[diesel]`) and `preferences.makes`.
 
 ## Quick start
 
@@ -79,8 +96,9 @@ docker compose run --rm hunter enrich --limit 300  # VIN, all photos, descriptio
 docker compose run --rm hunter market              # undamaged comparables for valuation
 docker compose run --rm hunter evaluate            # value, estimate, score
 docker compose run --rm hunter top -n 20           # print the ranking
+docker compose run --rm hunter vision --dry --limit 5  # preview the photo-assessment queue (no cost)
 docker compose run --rm hunter vision --id 123      # photo assessment for one listing (prints JSON)
-docker compose run --rm hunter vision              # photo assessment for the queue
+docker compose run --rm hunter vision --limit 3     # assess the top 3 from the queue
 docker compose run --rm hunter alert               # send Telegram alerts
 ```
 

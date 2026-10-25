@@ -216,20 +216,62 @@ class Evaluation:
     details: dict
 
 
-def evaluate(listing: dict, valuation: Valuation, crit: dict, sc: dict) -> Evaluation:
+def _lower(xs) -> set[str]:
+    return {str(x).lower().strip() for x in (xs or [])}
+
+
+def criteria_failures(listing: dict, crit: dict) -> list[str]:
+    """Twarde wymagania z config.yaml -> lista powodów odrzucenia (pusta = spełnia)."""
+    out = []
+    make = (listing.get("make") or "").lower()
+    model = (listing.get("model") or "").lower()
+    if listing.get("price_pln") is None:
+        out.append("brak ceny")
+    if (listing.get("power_hp") or 0) < (crit.get("min_power_hp") or 0):
+        out.append("za słaby silnik")
+    if crit.get("gearbox") and listing.get("gearbox") and listing["gearbox"] != crit["gearbox"]:
+        out.append(f"skrzynia {listing['gearbox']}")
+    year = listing.get("year")
+    if year and crit.get("min_year") and year < crit["min_year"]:
+        out.append("za stary")
+    if year and crit.get("max_year") and year > crit["max_year"]:
+        out.append("za nowy")
+    if crit.get("max_mileage_km") and (listing.get("mileage_km") or 0) > crit["max_mileage_km"]:
+        out.append("za duży przebieg")
+    if crit.get("fuels") and listing.get("fuel") not in _lower(crit["fuels"]):
+        out.append(f"paliwo {listing.get('fuel')}")
+    if crit.get("bodies") and listing.get("body_type") not in _lower(crit["bodies"]):
+        out.append(f"nadwozie {listing.get('body_type')}")
+    if crit.get("include_makes") and make not in _lower(crit["include_makes"]):
+        out.append("marka spoza listy")
+    if make in _lower(crit.get("exclude_makes")):
+        out.append("marka wykluczona")
+    inc = _lower(crit.get("include_models"))
+    if inc and f"{make}/{model}" not in inc:
+        out.append("model spoza listy")
+    if f"{make}/{model}" in _lower(crit.get("exclude_models")):
+        out.append("model wykluczony")
+    if crit.get("regions") and (listing.get("region") or "").lower() not in _lower(crit["regions"]):
+        out.append("region")
+    if crit.get("exclude_rhd") and listing.get("rhd"):
+        out.append("anglik (RHD)")
+    if crit.get("exclude_unregistered") and listing.get("has_registration") is False:
+        out.append("niezarejestrowany")
+    if crit.get("exclude_us_imports"):
+        text = " ".join(filter(None, [listing.get("title"), listing.get("short_description"), listing.get("description")]))
+        if _hits(text, US_IMPORT):
+            out.append("import z USA")
+    return out
+
+
+def evaluate(listing: dict, valuation: Valuation, crit: dict, sc: dict, prefs: dict | None = None) -> Evaluation:
     price = float(listing["price_pln"]) if listing.get("price_pln") is not None else None
     dmg = assess_damage(listing, valuation.value)
     details: dict = {"damage": dmg.__dict__, "reasons": []}
 
     reasons = details["reasons"]
-    if price is None:
-        reasons.append("brak ceny")
-    if (listing.get("power_hp") or 0) < crit["min_power_hp"]:
-        reasons.append("za słaby silnik")
-    if crit.get("gearbox") and listing.get("gearbox") and listing["gearbox"] != crit["gearbox"]:
-        reasons.append("nie automat")
-    if crit.get("exclude_rhd") and listing.get("rhd"):
-        reasons.append("anglik (RHD)")
+    reasons.extend(criteria_failures(listing, crit))
+    details["criteria_ok"] = not reasons
 
     if valuation.value is None or price is None:
         reasons.append("brak wyceny rynkowej")
@@ -244,13 +286,17 @@ def evaluate(listing: dict, valuation: Valuation, crit: dict, sc: dict) -> Evalu
     total = price + repair + fees
     savings = market - total
 
+    prefs = prefs if prefs is not None else {"bodies": crit.get("preferred_bodies"), "fuels": crit.get("preferred_fuels")}
     bonus = 0.0
-    if listing.get("body_type") in (crit.get("preferred_bodies") or []):
+    if listing.get("body_type") and listing["body_type"] in _lower(prefs.get("bodies")):
         bonus += sc["pref_bonus_pln"]
         details["reasons"].append(f"+ nadwozie {listing['body_type']}")
-    if listing.get("fuel") in (crit.get("preferred_fuels") or []):
+    if listing.get("fuel") and listing["fuel"] in _lower(prefs.get("fuels")):
         bonus += sc["pref_bonus_pln"] * 0.5
         details["reasons"].append(f"+ paliwo {listing['fuel']}")
+    if listing.get("make") and listing["make"].lower() in _lower(prefs.get("makes")):
+        bonus += sc["pref_bonus_pln"]
+        details["reasons"].append(f"+ marka {listing['make']}")
 
     # oszczędność skorygowana o ryzyko (ujemnej nie "poprawiamy" ryzykiem)
     score = (savings * (1 - dmg.risk) if savings > 0 else savings) + bonus

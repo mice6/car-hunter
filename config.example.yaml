@@ -1,19 +1,37 @@
 # Skopiuj do config.yaml i dostosuj.
 
+# Zmiany w tym pliku działają od następnego cyklu (co 30 min), bez restartu kontenera.
+# Wymagania (twarde): auto niespełniające ich nie dostaje alertu i nie idzie na RunPod.
+# Pusta lista [] = bez ograniczenia.
 criteria:
   min_power_hp: 170
-  gearbox: automatic            # tylko automat
+  gearbox: automatic            # automatic | manual | null (dowolna)
   budget_total_pln: 55000       # zakup + naprawa + opłaty
-  max_purchase_pln: 50000       # górna cena ogłoszenia przy scrapowaniu
+  max_purchase_pln: 50000       # górna cena ogłoszenia (filtr już przy pobieraniu)
   min_year: 2010
+  max_year: null
+  max_mileage_km: null          # np. 250000
+  fuels: []                     # diesel | petrol | petrol-lpg | hybrid | plugin-hybrid | electric
+  bodies: []                    # suv | combi | sedan | compact | minivan | coupe | cabrio | city-car
+  include_makes: []             # np. [kia, bmw, audi, volvo] - slugi jak w URL OtoMoto
+  exclude_makes: []             # np. [chrysler, dodge]
+  include_models: []            # np. [kia/stinger, bmw/seria-5, volvo/xc60]
+  exclude_models: []            # np. [bmw/x6]
+  regions: []                   # województwa, np. [Dolnośląskie, Wielkopolskie, Lubuskie, Opolskie]
   exclude_rhd: true
-  preferred_bodies: [suv, combi]   # premia, nie wymóg
-  preferred_fuels: [diesel]        # premia, nie wymóg
+  exclude_us_imports: false     # true = pomijaj importy z USA (Copart/IAAI)
+  exclude_unregistered: false   # true = tylko auta zarejestrowane w PL
+
+# Preferencje (miękkie): premia do score, nie wykluczają.
+preferences:
+  bodies: [suv, combi]
+  fuels: [diesel]
+  makes: []
 
 scoring:
   asking_to_transaction: 0.93     # ceny ofertowe zdrowych aut są zawyżone ~7%
   damage_history_discount: 0.0    # auto dla siebie -> 0; przy odsprzedaży ~0.12
-  pref_bonus_pln: 3000            # premia za każde trafienie w preferencje
+  pref_bonus_pln: 3000            # premia za nadwozie/markę z preferencji (paliwo: połowa)
   fees:
     pcc_rate: 0.02
     registration_inspection_pln: 1000
@@ -35,6 +53,7 @@ scraper:
   sources: [otomoto, olx]
 
 vision:                          # ocena zdjęć na RunPod (wymaga RUNPOD_API_KEY i RUNPOD_ENDPOINT_ID w .env)
+  auto: false                    # false = tylko ręcznie: hunter vision --id N / --limit N
   model: Qwen/Qwen3-VL-8B-Instruct-FP8   # musi być taki sam jak MODEL_NAME w endpoincie
   max_images: 12
   image_size: 1024x768

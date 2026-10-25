@@ -61,3 +61,34 @@ def test_evaluate_rejects_weak_engine():
     listing = {"price_pln": 20000, "power_hp": 150, "gearbox": "automatic", "title": "x"}
     ev = evaluate(listing, Valuation(60000, "test", 20), CFG.criteria, CFG.scoring)
     assert not ev.passes_filters and "za słaby silnik" in ev.details["reasons"]
+
+
+def test_criteria_filters():
+    from hunter.scoring import criteria_failures
+    base = {"price_pln": 30000, "power_hp": 200, "gearbox": "automatic", "make": "kia", "model": "stinger",
+            "fuel": "petrol", "body_type": "sedan", "year": 2018, "mileage_km": 150000, "region": "Dolnośląskie"}
+    crit = dict(CFG.criteria)
+    assert criteria_failures(base, crit) == []
+    assert "za duży przebieg" in criteria_failures(base, dict(crit, max_mileage_km=100000))
+    assert "paliwo petrol" in criteria_failures(base, dict(crit, fuels=["diesel"]))
+    assert "nadwozie sedan" in criteria_failures(base, dict(crit, bodies=["suv", "combi"]))
+    assert criteria_failures(base, dict(crit, include_models=["Kia/Stinger", "bmw/seria-5"])) == []
+    assert "model spoza listy" in criteria_failures(base, dict(crit, include_models=["bmw/seria-5"]))
+    assert "marka wykluczona" in criteria_failures(base, dict(crit, exclude_makes=["kia"]))
+    assert criteria_failures(base, dict(crit, regions=["dolnośląskie"])) == []
+    assert "import z USA" in criteria_failures(dict(base, description="Copart"), dict(crit, exclude_us_imports=True))
+
+
+def test_search_targets():
+    from hunter.pipeline import search_targets
+    assert search_targets({}) == [(None, None)]
+    assert search_targets({"include_makes": ["Kia", "bmw"]}) == [("kia", None), ("bmw", None)]
+    assert search_targets({"include_makes": ["kia"], "include_models": ["volvo/xc60"]}) == [("volvo", "xc60")]
+
+
+def test_make_preference_bonus():
+    listing = {"price_pln": 30000, "power_hp": 200, "gearbox": "automatic", "make": "volvo", "title": "x",
+               "description": "lekko obtarty"}
+    a = evaluate(listing, Valuation(60000, "t", 20), CFG.criteria, CFG.scoring, {"makes": []})
+    b = evaluate(listing, Valuation(60000, "t", 20), CFG.criteria, CFG.scoring, {"makes": ["volvo"]})
+    assert b.score - a.score == CFG.scoring["pref_bonus_pln"]
