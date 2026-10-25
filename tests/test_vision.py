@@ -122,3 +122,13 @@ def test_retry_on_502(monkeypatch):
     monkeypatch.setattr(vision.time, "sleep", lambda s: None)
     cfg = vision.VisionConfig(api_key="k", endpoint_id="e", model="m")
     assert vision._post_with_retry(cfg, {}) == {"ok": 1} and len(calls) == 2
+
+
+def test_parse_truncated_and_repeated():
+    looped = dict(LIGHT, parts=[{"part": "front_bumper", "action": "replace"}] * 40,
+                  damage_zones=[{"zone": "front", "severity": "heavy"}] * 5)
+    raw = json.dumps(looped)
+    d = vision.parse_response(raw[: len(raw) - 40])     # ucięte w środku
+    assert d["_repaired"]
+    full = vision.parse_response(raw)
+    assert len(full["parts"]) == 2 and len(full["damage_zones"]) == 1

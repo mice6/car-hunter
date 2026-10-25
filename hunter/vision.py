@@ -13,6 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
+import json_repair
 from curl_cffi import requests as creq
 
 log = logging.getLogger(__name__)
@@ -71,11 +72,11 @@ RESPONSE_SCHEMA = {
                            ["front", "rear", "left", "right", "interior", "engine_bay", "underbody"]},
             "required": ["front", "rear", "left", "right", "interior", "engine_bay", "underbody"],
         },
-        "damage_zones": {"type": "array", "items": {
+        "damage_zones": {"type": "array", "maxItems": 13, "items": {
             "type": "object",
             "properties": {"zone": {"enum": ZONES}, "severity": {"enum": SEVERITIES}},
             "required": ["zone", "severity"]}},
-        "parts": {"type": "array", "items": {
+        "parts": {"type": "array", "maxItems": 30, "items": {
             "type": "object",
             "properties": {"part": {"enum": list(PART_COSTS)}, "action": {"enum": ["replace", "repair"]}},
             "required": ["part", "action"]}},
@@ -108,7 +109,8 @@ Rules:
 - description_consistent: "no" if the photos show clearly worse damage than the seller describes.
 - confidence: how sure you are given photo quality and coverage.
 - notes_pl: 1-3 short sentences IN POLISH: what is damaged and what to check during inspection.
-Answer with JSON only, matching the schema."""
+- Each damage zone appears at most once. Never list the same part+side twice. Keep the answer compact.
+Answer with compact JSON only (no indentation), matching the schema."""
 
 
 @dataclass
@@ -166,11 +168,31 @@ def parse_response(text: str) -> dict:
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
-    m = re.search(r"\{.*\}", text, re.S)
-    data = json.loads(m.group(0) if m else text)
+    try:
+        m = re.search(r"\{.*\}", text, re.S)
+        data = json.loads(m.group(0) if m else text)
+    except (ValueError, AttributeError):
+        data = json_repair.loads(text)   # ucięta / lekko zepsuta odpowiedź
+        if not isinstance(data, dict):
+            raise ValueError("unparseable model output") from None
+        data["_repaired"] = True
     # sanityzacja: odrzuć nieznane wartości, żeby kosztorys się nie wysypał
-    data["parts"] = [p for p in data.get("parts") or [] if p.get("part") in PART_COSTS]
-    data["damage_zones"] = [z for z in data.get("damage_zones") or [] if z.get("zone") in ZONES]
+    data["parts"] = [p for p in data.get("parts") or [] if isinstance(p, dict) and p.get("part") in PART_COSTS]
+    seen, zones = set(), []
+    for z in data.get("damage_zones") or []:
+        if isinstance(z, dict) and z.get("zone") in ZONES and z["zone"] not in seen:
+            seen.add(z["zone"])
+            zones.append(z)
+    data["damage_zones"] = zones
+    # model w pętli powtarza części - każdą część liczymy max 2 razy (lewa/prawa), max 4 dla drzwi/felg/opon
+    counts: dict[str, int] = {}
+    parts = []
+    for p in data["parts"]:
+        cap = 4 if p["part"] in ("door", "wheel_rim", "tire", "side_window") else 2
+        if counts.get(p["part"], 0) < cap:
+            counts[p["part"]] = counts.get(p["part"], 0) + 1
+            parts.append(p)
+    data["parts"] = parts
     return data
 
 
@@ -220,15 +242,24 @@ def analyze(cfg: VisionConfig, listing: dict) -> dict:
         "model": cfg.model,
         "messages": build_messages(listing, photos),
         "temperature": 0.1,
-        "max_tokens": 900,
+        "max_tokens": 2000,
+        "repetition_penalty": 1.05,
         "response_format": {"type": "json_schema",
                             "json_schema": {"name": "damage_assessment", "schema": RESPONSE_SCHEMA}},
     }
+    started = time.monotonic()
     j = _post_with_retry(cfg, body)
-    data = parse_response(j["choices"][0]["message"]["content"])
+    choice = j["choices"][0]
+    content = choice["message"].get("content") or ""
     usage = j.get("usage") or {}
-    data["_meta"] = {"model": cfg.model, "photos": len(photos),
-                     "prompt_tokens": usage.get("prompt_tokens"), "completion_tokens": usage.get("completion_tokens")}
+    meta = {"model": cfg.model, "photos": len(photos), "seconds": round(time.monotonic() - started, 1),
+            "finish_reason": choice.get("finish_reason"),
+            "prompt_tokens": usage.get("prompt_tokens"), "completion_tokens": usage.get("completion_tokens")}
+    try:
+        data = parse_response(content)
+    except ValueError as e:
+        return {"_error": f"parse: {e}", "_raw": content[:4000], "_meta": meta}
+    data["_meta"] = meta
     return data
 
 

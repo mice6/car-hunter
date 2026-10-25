@@ -2,3 +2,4 @@ curl_cffi>=0.7
 psycopg[binary]>=3.2
 PyYAML>=6.0
 numpy>=1.26
+json-repair>=0.30
