@@ -50,7 +50,9 @@ def test_evaluate_pass_and_budget():
                "body_type": "combi", "title": "Skoda Superb", "description": "lekko obtarty zderzak"}
     ev = evaluate(listing, Valuation(60000, "test", 20), CFG.criteria, CFG.scoring)
     assert ev.passes_filters, ev.details
-    assert ev.savings > 15000 and ev.score > ev.savings * 0.8
+    # bez zdjęć połowa różnicy cena-rynek liczona jako szkoda: 0.5 * 30 000
+    assert ev.repair_estimate == 15000 and ev.details["repair_basis"] == "implied"
+    assert ev.savings > 5000 and ev.score > ev.savings * 0.8
 
     expensive = dict(listing, price_pln=50000)
     ev2 = evaluate(expensive, Valuation(80000, "test", 20), CFG.criteria, CFG.scoring)
@@ -92,3 +94,26 @@ def test_make_preference_bonus():
     a = evaluate(listing, Valuation(60000, "t", 20), CFG.criteria, CFG.scoring, {"makes": []})
     b = evaluate(listing, Valuation(60000, "t", 20), CFG.criteria, CFG.scoring, {"makes": ["volvo"]})
     assert b.score - a.score == CFG.scoring["pref_bonus_pln"]
+
+
+def test_traps_and_price_ratio():
+    base = {"price_pln": 30000, "power_hp": 250, "gearbox": "automatic", "title": "BMW X5", "description": ""}
+    v = Valuation(150000, "t", 30)
+    cheap = evaluate(dict(base, price_pln=9000), v, CFG.criteria, CFG.scoring)
+    assert not cheap.passes_filters and any("podejrzanie niska" in r for r in cheap.details["reasons"])
+    assert not cheap.details["criteria_ok"]
+    for desc, reason in [("Sprzedam w całości na części", "na części"), ("Cesja leasingu, odstępne 20 tys", "cesja"),
+                         ("Auto bez dokumentów", "bez dokumentów")]:
+        ev = evaluate(dict(base, description=desc), v, CFG.criteria, CFG.scoring)
+        assert any(reason in r for r in ev.details["reasons"]), (desc, ev.details["reasons"])
+    ok = evaluate(dict(base, description="Auto z leasingu, serwisowane w ASO, części z ASO"), v, CFG.criteria, CFG.scoring)
+    assert ok.details["criteria_ok"], ok.details["reasons"]
+    few = evaluate(dict(base, enriched_at="x", photos=["a"]), v, CFG.criteria, CFG.scoring)
+    assert any("za mało zdjęć" in r for r in few.details["reasons"])
+
+
+def test_valuation_year_window():
+    from hunter.scoring import value_from_comparables
+    comps = [{"year": 2017, "mileage_km": 100000, "power_hp": 265, "fuel": "diesel", "price_pln": 150000}] * 6
+    assert value_from_comparables({"year": 2011, "mileage_km": 200000, "power_hp": 265, "fuel": "diesel"}, comps).value is None
+    assert value_from_comparables({"year": 2016, "mileage_km": 120000, "power_hp": 265, "fuel": "diesel"}, comps).value == 150000

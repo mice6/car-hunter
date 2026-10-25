@@ -33,9 +33,12 @@ def _weighted_median(values: list[float], weights: list[float]) -> float:
     return float(v[np.searchsorted(cw, cw[-1] / 2)])
 
 
-def value_from_comparables(target: dict, comps: list[dict], min_n: int = 5) -> Valuation:
+def value_from_comparables(target: dict, comps: list[dict], min_n: int = 5, year_window: int = 2) -> Valuation:
     """target/comps: dict z year, mileage_km, power_hp, fuel, price_pln."""
     comps = [c for c in comps if c.get("price_pln") and c.get("year")]
+    if target.get("year"):
+        # tylko sąsiednie roczniki - inaczej 2011 wyceniamy po autach z 2016
+        comps = [c for c in comps if abs(c["year"] - target["year"]) <= year_window]
     if not comps:
         return Valuation(None, "none", 0)
 
@@ -118,6 +121,12 @@ LIGHT = [
 ]
 FRONT = [r"przód", r"przod\b", r"maska", r"chłodnic", r"chlodnic", r"reflektor", r"pas przedni", r"czołow"]
 US_IMPORT = [r"\busa\b", r"copart", r"iaai", r"jedzie z usa", r"z ameryki", r"carfax", r"autocheck"]
+PARTS_ONLY = [r"na częś", r"na czesc", r"dawc", r"rozbiórk", r"rozbiork", r"tylko częś", r"tylko czesc",
+              r"w całości na", r"w calosci na"]
+NOT_A_PRICE = [r"\bcesj", r"przejęci\w* leasing", r"przejeci\w* leasing", r"odstępn", r"odstepn", r"licytacj", r"cena wywoławcz", r"cena wywolawcz",
+               r"zaliczk", r"\bdo wykupu", r"przejęci\w* rat", r"przejeci\w* rat"]
+NO_DOCS = [r"bez dokument", r"brak dokument", r"bez papier", r"brak papier", r"bez dowodu", r"brak dowodu",
+           r"bez karty", r"salvage", r"\bparts only\b"]
 FLOOD = [r"zalan", r"flood", r"powódź", r"powodz", r"water damage"]
 
 
@@ -257,10 +266,18 @@ def criteria_failures(listing: dict, crit: dict) -> list[str]:
         out.append("anglik (RHD)")
     if crit.get("exclude_unregistered") and listing.get("has_registration") is False:
         out.append("niezarejestrowany")
-    if crit.get("exclude_us_imports"):
-        text = " ".join(filter(None, [listing.get("title"), listing.get("short_description"), listing.get("description")]))
-        if _hits(text, US_IMPORT):
-            out.append("import z USA")
+    text = " ".join(filter(None, [listing.get("title"), listing.get("short_description"), listing.get("description")]))
+    if crit.get("exclude_us_imports") and _hits(text, US_IMPORT):
+        out.append("import z USA")
+    if _hits(text, PARTS_ONLY):
+        out.append("na części / dawca")
+    if _hits(text, NOT_A_PRICE):
+        out.append("cesja/licytacja/zaliczka - cena nie jest ceną auta")
+    if _hits(text, NO_DOCS):
+        out.append("bez dokumentów")
+    min_photos = crit.get("min_photos", 3)
+    if listing.get("enriched_at") and len(listing.get("photos") or []) < min_photos:
+        out.append(f"za mało zdjęć ({len(listing.get('photos') or [])})")
     return out
 
 
@@ -271,14 +288,29 @@ def evaluate(listing: dict, valuation: Valuation, crit: dict, sc: dict, prefs: d
 
     reasons = details["reasons"]
     reasons.extend(criteria_failures(listing, crit))
-    details["criteria_ok"] = not reasons
 
     if valuation.value is None or price is None:
+        details["criteria_ok"] = not reasons
         reasons.append("brak wyceny rynkowej")
         return Evaluation(None, valuation.method, valuation.n, None, None, None, None, dmg.risk, None, False, details)
 
+    # Cena ułamkiem rynku = prawie zawsze wrak, części, licytacja albo fałszywa cena.
+    ratio = price / valuation.value
+    details["price_ratio"] = round(ratio, 3)
+    if ratio < sc.get("min_price_ratio", 0.2):
+        reasons.append(f"podejrzanie niska cena ({ratio:.0%} rynku)")
+    details["criteria_ok"] = not reasons
+
     market = valuation.value * sc["asking_to_transaction"] * (1 - sc.get("damage_history_discount", 0))
-    repair = dmg.repair_pln if dmg.repair_pln is not None else max(2500.0, valuation.value * dmg.repair_fraction)
+    if dmg.repair_pln is not None:
+        repair = dmg.repair_pln
+    else:
+        # Bez zdjęć: sprzedawca zna szkodę lepiej niż słowa kluczowe. Zakładamy, że część różnicy
+        # cena-rynek to realna szkoda (rynek wycenia ją lepiej niż nasza heurystyka).
+        heuristic = valuation.value * dmg.repair_fraction
+        implied = sc.get("implied_damage_share", 0.5) * max(0.0, valuation.value - price)
+        repair = max(2500.0, heuristic, implied)
+        details["repair_basis"] = "implied" if implied > heuristic else "keywords"
     f = sc["fees"]
     fees = price * f["pcc_rate"] + f["registration_inspection_pln"] + f["transport_pln"]
     if listing.get("has_registration") is False or listing.get("imported"):

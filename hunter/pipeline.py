@@ -121,6 +121,8 @@ def enrich(cfg: Config, conn, http: Http, limit: int = 200) -> int:
             continue
         db.apply_detail(conn, r["id"], d)
         done += 1
+        if done % 25 == 0:
+            log.info("enrich: %d/%d", done, len(rows))
     log.info("enriched %d/%d", done, len(rows))
     return done
 
@@ -186,7 +188,8 @@ def evaluate_all(cfg: Config, conn) -> dict:
                    WHERE kind='market' AND make=%s AND model=%s AND gearbox IS NOT DISTINCT FROM %s
                      AND last_seen > now() - interval '60 days' AND price_pln > 3000""",
                 key).fetchall()
-        val = value_from_comparables(c, comps_cache[key], cfg.scoring["min_comparables"])
+        val = value_from_comparables(c, comps_cache[key], cfg.scoring["min_comparables"],
+                                     cfg.scoring.get("valuation_year_window", 2))
         ev = evaluate(c, val, cfg.criteria, cfg.scoring, cfg.preferences)
         conn.execute(
             """INSERT INTO evaluations (listing_id, market_value, valuation_method, comparables_n, repair_estimate,

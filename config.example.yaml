@@ -21,6 +21,7 @@ criteria:
   exclude_rhd: true
   exclude_us_imports: false     # true = pomijaj importy z USA (Copart/IAAI)
   exclude_unregistered: false   # true = tylko auta zarejestrowane w PL
+  min_photos: 3                 # mniej zdjęć = nie da się ocenić
 
 # Preferencje (miękkie): premia do score, nie wykluczają.
 preferences:
@@ -39,6 +40,9 @@ scoring:
     unregistered_import_pln: 1500  # tłumaczenia, badanie, rejestracja auta sprowadzonego
   min_score_alert_pln: 8000        # alert, gdy skorygowana oszczędność >= tej kwoty
   min_comparables: 5
+  valuation_year_window: 2         # wycena tylko z aut ±2 roczniki
+  min_price_ratio: 0.2             # cena < 20% rynku = wrak/części/licytacja -> odrzuć
+  implied_damage_share: 0.5        # bez zdjęć: 50% różnicy cena-rynek traktuj jako szkodę
 
 scraper:
   delay_min_s: 2.5
