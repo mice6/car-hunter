@@ -146,8 +146,9 @@ def main(argv=None):
                 print("Kolejka pusta.")
         else:
             print(res)
+        if not args.dry and (res.get("ok") or res.get("error")):
+            pipeline.evaluate_all(cfg, conn)   # wyniki ze zdjęć od razu w rankingu
         if args.id is not None and not args.dry:
-            pipeline.evaluate_all(cfg, conn)
             _print_vision(conn, args.id)
     elif args.cmd == "alert":
         print(pipeline.alert(cfg, conn))
