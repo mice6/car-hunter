@@ -117,3 +117,11 @@ def test_valuation_year_window():
     comps = [{"year": 2017, "mileage_km": 100000, "power_hp": 265, "fuel": "diesel", "price_pln": 150000}] * 6
     assert value_from_comparables({"year": 2011, "mileage_km": 200000, "power_hp": 265, "fuel": "diesel"}, comps).value is None
     assert value_from_comparables({"year": 2016, "mileage_km": 120000, "power_hp": 265, "fuel": "diesel"}, comps).value == 150000
+
+
+def test_no_registration_and_no_engine():
+    base = {"price_pln": 30000, "power_hp": 250, "gearbox": "automatic", "title": "ML"}
+    v = Valuation(80000, "t", 30)
+    ev = evaluate(dict(base, description="auto bez prawa rej. oraz bez silnika"), v, CFG.criteria, CFG.scoring)
+    r = " ".join(ev.details["reasons"])
+    assert "prawa rejestracji" in r and "brak silnika" in r

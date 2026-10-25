@@ -125,8 +125,11 @@ PARTS_ONLY = [r"na częś", r"na czesc", r"dawc", r"rozbiórk", r"rozbiork", r"t
               r"w całości na", r"w calosci na"]
 NOT_A_PRICE = [r"\bcesj", r"przejęci\w* leasing", r"przejeci\w* leasing", r"odstępn", r"odstepn", r"licytacj", r"cena wywoławcz", r"cena wywolawcz",
                r"zaliczk", r"\bdo wykupu", r"przejęci\w* rat", r"przejeci\w* rat"]
-NO_DOCS = [r"bez dokument", r"brak dokument", r"bez papier", r"brak papier", r"bez dowodu", r"brak dowodu",
+NO_DOCS = [r"bez prawa rej", r"brak prawa rej", r"bez możliwości rej", r"bez mozliwosci rej", r"nie do rejestracji",
+           r"bez dokument", r"brak dokument", r"bez papier", r"brak papier", r"bez dowodu", r"brak dowodu",
            r"bez karty", r"salvage", r"\bparts only\b"]
+MISSING_POWERTRAIN = [r"bez silnika", r"brak silnika", r"bez skrzyni", r"brak skrzyni", r"silnik wyjęty",
+                      r"silnik wyjety", r"bez napędu", r"bez napedu"]
 FLOOD = [r"zalan", r"flood", r"powódź", r"powodz", r"water damage"]
 
 
@@ -274,7 +277,9 @@ def criteria_failures(listing: dict, crit: dict) -> list[str]:
     if _hits(text, NOT_A_PRICE):
         out.append("cesja/licytacja/zaliczka - cena nie jest ceną auta")
     if _hits(text, NO_DOCS):
-        out.append("bez dokumentów")
+        out.append("bez dokumentów / bez prawa rejestracji")
+    if crit.get("exclude_missing_powertrain", True) and _hits(text, MISSING_POWERTRAIN):
+        out.append("brak silnika/skrzyni")
     min_photos = crit.get("min_photos", 3)
     if listing.get("enriched_at") and len(listing.get("photos") or []) < min_photos:
         out.append(f"za mało zdjęć ({len(listing.get('photos') or [])})")
@@ -303,7 +308,10 @@ def evaluate(listing: dict, valuation: Valuation, crit: dict, sc: dict, prefs: d
 
     market = valuation.value * sc["asking_to_transaction"] * (1 - sc.get("damage_history_discount", 0))
     if dmg.repair_pln is not None:
-        repair = dmg.repair_pln
+        # Sprzedawca, który bierze 25% rynku, zwykle wie o czymś, czego nie widać na zdjęciach.
+        gap_floor = sc.get("vision_min_gap_share", 0.25) * max(0.0, valuation.value - price)
+        repair = max(dmg.repair_pln, gap_floor)
+        details["repair_basis"] = "vision" if dmg.repair_pln >= gap_floor else "vision+gap_floor"
     else:
         # Bez zdjęć: sprzedawca zna szkodę lepiej niż słowa kluczowe. Zakładamy, że część różnicy
         # cena-rynek to realna szkoda (rynek wycenia ją lepiej niż nasza heurystyka).

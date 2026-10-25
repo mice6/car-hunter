@@ -63,6 +63,7 @@ MECHANICAL_COSTS: dict[str, int] = {
     "automatic_gearbox": 7000,      # regeneracja/mechatronika automatu
     "manual_gearbox_clutch": 3500,
     "engine_major": 12000,          # silnik do remontu/wymiany
+    "engine_missing": 18000,        # brak silnika - używany silnik + montaż
     "engine_minor": 2500,           # osprzęt, wycieki, czujniki
     "turbo": 3500,
     "injectors_fuel": 3000,
@@ -85,6 +86,7 @@ RESPONSE_SCHEMA = {
     "properties": {
         "photo_observations": {"type": "array", "maxItems": 12,
                                "items": {"type": "string", "maxLength": 160}},
+        "notes_pl": {"type": "string", "maxLength": 400},
         "photos_cover": {
             "type": "object",
             "properties": {k: {"type": "boolean"} for k in
@@ -109,7 +111,6 @@ RESPONSE_SCHEMA = {
         "description_consistent": {"enum": ["yes", "no", "unknown"]},
         "overall_severity": {"enum": ["cosmetic", "light", "moderate", "heavy", "total_loss"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "notes_pl": {"type": "string", "maxLength": 400},
     },
     "required": ["photo_observations", "mechanical_issues", "photos_cover", "damage_zones", "parts", "airbags_deployed", "structural_damage",
                  "suspension_damage", "flood_signs", "fire_signs", "drivable", "description_consistent",
@@ -142,7 +143,11 @@ turbo, injectors...). Photos rarely show these; the description is the source.
 - description_consistent: "no" ONLY if photos show clearly worse damage than described; a short or vague \
 description that matches the photos is "yes".
 - overall_severity must agree with the parts list and airbags (deployed airbags = at least "moderate").
-- notes_pl: 1-3 short, grammatically correct sentences IN POLISH: what is damaged and what to check.
+- notes_pl (written right after the observations): 1-3 short, grammatically correct sentences IN POLISH: \
+what is damaged and what to check. EVERYTHING you mention in notes_pl (damaged areas, missing engine, \
+non-starting engine, airbags) MUST also appear in parts / damage_zones / mechanical_issues / airbags_deployed.
+- A missing engine is "engine_missing"; an engine that cranks but does not start is "engine_minor" unless the \
+description says the engine is seized or broken ("engine_major").
 Answer with compact JSON only (no indentation), matching the schema."""
 
 
@@ -265,6 +270,13 @@ def _post_with_retry(cfg: VisionConfig, body: dict) -> dict:
     raise RuntimeError(last)
 
 
+NOTE_MECH_HINTS = [
+    (r"brak silnika|bez silnika|no engine|engine (?:is )?missing|missing engine", "engine_missing"),
+    (r"skrzyni\w* bieg|gearbox|transmission", "automatic_gearbox"),
+    (r"nie odpala|nie uruchamia|does not start|doesn't start|won't start|not start", "engine_minor"),
+]
+ZONE_MIN_COST = {"cosmetic": 400, "light": 1200, "moderate": 3500, "heavy": 8000}
+
 UNDER_CAR_PARTS = {"steering_rack", "suspension_arm", "strut_shock", "driveshaft_hub"}
 
 
@@ -284,6 +296,24 @@ def sanitize(data: dict, listing: dict) -> dict:
         data.setdefault("_sanitized", []).append("gearbox issue mapped to automatic")
     elif gearbox == "manual" and "automatic_gearbox" in mech:
         data["mechanical_issues"] = ["manual_gearbox_clutch" if m == "automatic_gearbox" else m for m in mech]
+    # spójność: usterki wspomniane w notatce/obserwacjach muszą trafić do mechanical_issues
+    text = " ".join([data.get("notes_pl") or ""] + list(data.get("photo_observations") or [])).lower()
+    mech = list(data.get("mechanical_issues") or [])
+    for pattern, issue in NOTE_MECH_HINTS:
+        if re.search(pattern, text) and issue not in mech:
+            if issue == "automatic_gearbox":
+                if not re.search(r"(?:problem|błąd|blad|fault|usterk|nie przełącza|nie przelacza)", text):
+                    continue
+                issue = "manual_gearbox_clutch" if gearbox == "manual" else "automatic_gearbox"
+            if issue == "engine_minor" and {"engine_major", "engine_missing"} & set(mech):
+                continue
+            mech.append(issue)
+            data.setdefault("_sanitized", []).append(f"added {issue} from notes")
+    if {"engine_major", "engine_missing"} & set(mech):
+        mech = [m for m in mech if m != "engine_minor"]
+    if "engine_missing" in mech:
+        mech = [m for m in mech if m != "engine_major"]
+    data["mechanical_issues"] = mech
     # "kontrolka" zwykle dotyczy tej samej usterki - nie licz podwójnie
     mech = data.get("mechanical_issues") or []
     if "warning_light_unknown" in mech and len(set(mech)) > 1:
@@ -424,6 +454,11 @@ def estimate_repair(v: dict, market_value: float | None) -> VisionEstimate:
         flags.append(f"niska pewność ({conf:.0%})")
 
     contingency = HIDDEN_CONTINGENCY + 0.05 * len(missing) + (0.10 if structural in ("yes", "likely") else 0)
+    # strefy uszkodzeń jako dolna granica - model bywa skąpy w liście części
+    zone_floor = sum(ZONE_MIN_COST.get(z.get("severity"), 0) for z in v.get("damage_zones") or [])
+    if zone_floor > parts_cost:
+        breakdown["zone_floor"] = zone_floor - parts_cost
+        parts_cost = zone_floor
     repair = (parts_cost + extras) * seg * (1 + contingency)
     if sev == "total_loss":
         risk += 0.30

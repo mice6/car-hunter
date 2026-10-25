@@ -69,8 +69,8 @@ def test_vision_overrides_keyword_heuristic():
 
 
 def test_evaluate_uses_vision_amount():
-    listing = {"price_pln": 30000, "power_hp": 250, "gearbox": "automatic", "title": "Audi A6",
-               "description": "Jedzie z USA", "vision": LIGHT}
+    listing = {"price_pln": 60000, "power_hp": 250, "gearbox": "automatic", "title": "Audi A6",
+               "description": "Jedzie z USA", "vision": LIGHT}   # mała różnica do rynku -> bez gap_floor
     ev = evaluate(listing, Valuation(70000, "t", 20), CFG.criteria, CFG.scoring)
     est = vision.estimate_repair(LIGHT, 70000)
     assert ev.repair_estimate == est.repair_pln
@@ -162,3 +162,20 @@ def test_sanitize_drops_generic_warning_light():
     out = vision.sanitize(dict(json.loads(json.dumps(LIGHT)), mechanical_issues=["warning_light_unknown", "automatic_gearbox"]),
                           {"gearbox": "automatic"})
     assert out["mechanical_issues"] == ["automatic_gearbox"]
+
+
+def test_notes_cross_check_and_zone_floor():
+    v = dict(json.loads(json.dumps(LIGHT)), parts=[], mechanical_issues=[],
+             notes_pl="Zniszczony przód, brak silnika.", damage_zones=[{"zone": "front_right", "severity": "heavy"}])
+    out = vision.sanitize(v, {"gearbox": "automatic"})
+    assert out["mechanical_issues"] == ["engine_missing"]
+    e = vision.estimate_repair(out, 70000)
+    assert e.breakdown["zone_floor"] == vision.ZONE_MIN_COST["heavy"]
+    assert e.repair_pln > 25000
+
+
+def test_vision_gap_floor():
+    listing = {"price_pln": 15000, "power_hp": 258, "gearbox": "automatic", "title": "ML", "description": "",
+               "vision": dict(LIGHT, parts=[])}
+    ev = evaluate(listing, Valuation(63000, "t", 20), CFG.criteria, CFG.scoring)
+    assert ev.repair_estimate == 0.25 * (63000 - 15000) and ev.details["repair_basis"] == "vision+gap_floor"
