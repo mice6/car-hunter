@@ -284,6 +284,10 @@ def sanitize(data: dict, listing: dict) -> dict:
         data.setdefault("_sanitized", []).append("gearbox issue mapped to automatic")
     elif gearbox == "manual" and "automatic_gearbox" in mech:
         data["mechanical_issues"] = ["manual_gearbox_clutch" if m == "automatic_gearbox" else m for m in mech]
+    # "kontrolka" zwykle dotyczy tej samej usterki - nie licz podwójnie
+    mech = data.get("mechanical_issues") or []
+    if "warning_light_unknown" in mech and len(set(mech)) > 1:
+        data["mechanical_issues"] = [m for m in mech if m != "warning_light_unknown"]
     return data
 
 

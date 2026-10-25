@@ -54,7 +54,7 @@ scraper:
 
 vision:                          # ocena zdjęć na RunPod (wymaga RUNPOD_API_KEY i RUNPOD_ENDPOINT_ID w .env)
   auto: false                    # false = tylko ręcznie: hunter vision --id N / --limit N
-  model: Qwen/Qwen3-VL-8B-Instruct-FP8   # musi być taki sam jak MODEL_NAME w endpoincie
+  model: qwen/qwen3-vl-30b-a3b-instruct-fp8   # dokładnie jak w GET /openai/v1/models endpointu
   max_images: 12
   image_size: 1024x768
   inline_images: true            # zdjęcia pobiera car-hunter i wysyła jako base64

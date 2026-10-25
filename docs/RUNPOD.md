@@ -11,9 +11,9 @@ RunPod console → **Serverless** → **New Endpoint** → **vLLM** (quick deplo
 
 | Setting | Value |
 |---|---|
-| Model | `Qwen/Qwen3-VL-8B-Instruct-FP8` |
-| GPU | 24 GB tier (L4 / RTX 4090 / A5000) |
-| Max workers | 2 |
+| Model | `Qwen/Qwen3-VL-30B-A3B-Instruct-FP8` |
+| GPU | 48 GB tier |
+| Max workers | 1 |
 | Active (min) workers | 0 |
 | Idle timeout | 60 s |
 | Execution timeout | 600 s |
@@ -22,11 +22,24 @@ RunPod console → **Serverless** → **New Endpoint** → **vLLM** (quick deplo
 Environment variables (Edit endpoint → Environment Variables):
 
 ```env
-MODEL_NAME=Qwen/Qwen3-VL-8B-Instruct-FP8
+MODEL_NAME=Qwen/Qwen3-VL-30B-A3B-Instruct-FP8
 MAX_MODEL_LEN=16384
-GPU_MEMORY_UTILIZATION=0.92
 MAX_NUM_SEQS=8
-LIMIT_MM_PER_PROMPT={"image":12}
+ENFORCE_EAGER=true
+ENABLE_PREFIX_CACHING=false
+```
+
+Why 30B-A3B and not the 8B model: in side-by-side tests on real listings the 8B model missed obvious
+damage (bonnet), confused a deployed steering-wheel airbag with the steering rack, and on one car
+invented damage that was not in any photo. The 30B MoE model (about 3B active parameters, so still
+fast) got both test cars essentially right, including a gearbox fault mentioned only in the text.
+Prefix caching is disabled because it brings little here and was a suspect in the cross-request
+hallucination.
+
+The served model name may be lower-cased. Check it and copy it into `vision.model`:
+
+```bash
+curl -s https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/openai/v1/models -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
 If requests with many photos fail with a "too many images" error, the worker did not pass
@@ -44,7 +57,7 @@ Copy the **Endpoint ID** from the endpoint page and create an API key under
 ```bash
 curl -s https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/openai/v1/chat/completions \
   -H "Authorization: Bearer $RUNPOD_API_KEY" -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen3-VL-8B-Instruct-FP8","max_tokens":60,
+  -d '{"model":"Qwen/Qwen3-VL-30B-A3B-Instruct-FP8","max_tokens":60,
        "messages":[{"role":"user","content":[
          {"type":"text","text":"Describe this image in one sentence."},
          {"type":"image_url","image_url":{"url":"https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/280px-PNG_transparency_demonstration_1.png"}}]}]}'
@@ -114,7 +127,7 @@ mid-segment car. Calibrate them against real quotes.
 
 ## Cost
 
-Each listing is one request with up to 12 images at 1024×768, roughly 10k prompt tokens.
-On a 24 GB GPU this takes a few seconds, and concurrent requests are batched by vLLM. Expect
-well under 1 US cent per listing plus cold starts; check actual usage on the RunPod billing page
-after the first runs and adjust `max_per_day`.
+Each listing is one request with up to 12 images at 1024×768, roughly 7–10k prompt tokens.
+Measured on a 48 GB GPU at $1.22/h: 20–35 s per listing with 8 photos, about $0.007–0.012.
+A cold start (model download and load) adds a few minutes once per wake-up. Check actual usage on
+the RunPod billing page and adjust `max_per_day`.

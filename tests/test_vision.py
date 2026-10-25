@@ -156,3 +156,9 @@ def test_sanitize_gearbox_and_under_car_parts():
     assert all(p["part"] != "steering_rack" for p in out["parts"])
     kept = vision.sanitize(dict(json.loads(json.dumps(v)), suspension_damage="yes"), {"gearbox": "manual"})
     assert any(p["part"] == "steering_rack" for p in kept["parts"])
+
+
+def test_sanitize_drops_generic_warning_light():
+    out = vision.sanitize(dict(json.loads(json.dumps(LIGHT)), mechanical_issues=["warning_light_unknown", "automatic_gearbox"]),
+                          {"gearbox": "automatic"})
+    assert out["mechanical_issues"] == ["automatic_gearbox"]
