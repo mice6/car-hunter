@@ -92,10 +92,33 @@ def test_analyze_calls_runpod_openai_route(monkeypatch):
         return Resp()
 
     monkeypatch.setattr(vision.creq, "post", fake_post)
+    monkeypatch.setattr(vision, "fetch_image_data_url", lambda u: "data:image/jpeg;base64,QUJD")
     cfg = vision.VisionConfig(api_key="k", endpoint_id="abc123", model="Qwen/Qwen3-VL-8B-Instruct-FP8")
     res = vision.analyze(cfg, {"title": "x", "photos": ["https://cdn/a/image;s=1280x960"]})
     assert captured["url"] == "https://api.runpod.ai/v2/abc123/openai/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer k"
     assert captured["body"]["response_format"]["type"] == "json_schema"
     assert res["parts"][0]["part"] == "rear_bumper" and res["_meta"]["photos"] == 1
+    img = captured["body"]["messages"][1]["content"][1]["image_url"]["url"]
+    assert img.startswith("data:image/jpeg;base64,")
     assert vision.analyze(cfg, {"title": "x", "photos": []}) == {"_error": "no_photos"}
+
+
+def test_retry_on_502(monkeypatch):
+    calls = []
+
+    class R:
+        def __init__(self, code):
+            self.status_code, self.text = code, "bad gateway"
+
+        def json(self):
+            return {"ok": 1}
+
+    def fake_post(*a, **k):
+        calls.append(1)
+        return R(502 if len(calls) < 2 else 200)
+
+    monkeypatch.setattr(vision.creq, "post", fake_post)
+    monkeypatch.setattr(vision.time, "sleep", lambda s: None)
+    cfg = vision.VisionConfig(api_key="k", endpoint_id="e", model="m")
+    assert vision._post_with_retry(cfg, {}) == {"ok": 1} and len(calls) == 2

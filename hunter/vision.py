@@ -5,9 +5,11 @@ tutaj, z tabeli cen części, bo LLM-y słabo szacują złotówki, a dobrze rozp
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
@@ -118,6 +120,7 @@ class VisionConfig:
     image_size: str = "1024x768"
     timeout_s: int = 600
     concurrency: int = 4
+    inline_images: bool = True   # pobierz zdjęcia lokalnie i wyślij jako base64 (endpoint nie sięga do CDN)
 
     @property
     def base_url(self) -> str:
@@ -171,8 +174,46 @@ def parse_response(text: str) -> dict:
     return data
 
 
+_img_session = None
+
+
+def fetch_image_data_url(url: str) -> str | None:
+    """Pobiera zdjęcie (odcisk Chrome) i zwraca data URL. None, gdy się nie da."""
+    global _img_session
+    if _img_session is None:
+        _img_session = creq.Session(impersonate="chrome")
+    try:
+        r = _img_session.get(url, timeout=30)
+    except Exception as e:  # noqa: BLE001
+        log.warning("image %s: %s", url[:80], e)
+        return None
+    ctype = (r.headers.get("content-type") or "").split(";")[0].strip()
+    if r.status_code != 200 or not ctype.startswith("image/") or len(r.content) < 2000:
+        log.warning("image %s: status %s, %s, %d B", url[:80], r.status_code, ctype, len(r.content))
+        return None
+    return f"data:{ctype};base64," + base64.b64encode(r.content).decode()
+
+
+def _post_with_retry(cfg: VisionConfig, body: dict) -> dict:
+    last = ""
+    for attempt in range(1, 4):
+        r = creq.post(cfg.base_url + "/chat/completions", json=body, timeout=cfg.timeout_s,
+                      headers={"Authorization": f"Bearer {cfg.api_key}"})
+        if r.status_code == 200:
+            return r.json()
+        last = f"RunPod {r.status_code}: {r.text[:300]}"
+        if r.status_code in (502, 503, 504, 524) and attempt < 3:
+            log.warning("%s - retry %d in %ds", last, attempt, 20 * attempt)
+            time.sleep(20 * attempt)
+            continue
+        break
+    raise RuntimeError(last)
+
+
 def analyze(cfg: VisionConfig, listing: dict) -> dict:
     photos = select_photos(listing.get("photos") or [], cfg.max_images, cfg.image_size)
+    if cfg.inline_images:
+        photos = [d for d in (fetch_image_data_url(u) for u in photos) if d]
     if not photos:
         return {"_error": "no_photos"}
     body = {
@@ -183,11 +224,7 @@ def analyze(cfg: VisionConfig, listing: dict) -> dict:
         "response_format": {"type": "json_schema",
                             "json_schema": {"name": "damage_assessment", "schema": RESPONSE_SCHEMA}},
     }
-    r = creq.post(cfg.base_url + "/chat/completions", json=body, timeout=cfg.timeout_s,
-                  headers={"Authorization": f"Bearer {cfg.api_key}"})
-    if r.status_code != 200:
-        raise RuntimeError(f"RunPod {r.status_code}: {r.text[:300]}")
-    j = r.json()
+    j = _post_with_retry(cfg, body)
     data = parse_response(j["choices"][0]["message"]["content"])
     usage = j.get("usage") or {}
     data["_meta"] = {"model": cfg.model, "photos": len(photos),

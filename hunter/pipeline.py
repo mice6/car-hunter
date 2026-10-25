@@ -229,7 +229,7 @@ def vision_config(cfg: Config):
     v = cfg.vision
     return VisionConfig(api_key=cfg.runpod_api_key, endpoint_id=cfg.runpod_endpoint_id, model=v["model"],
                         max_images=v["max_images"], image_size=v["image_size"], timeout_s=v["timeout_s"],
-                        concurrency=v["concurrency"])
+                        concurrency=v["concurrency"], inline_images=v.get("inline_images", True))
 
 
 def run_vision(cfg: Config, conn, limit: int | None = None, listing_id: int | None = None,
