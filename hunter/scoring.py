@@ -181,7 +181,10 @@ def assess_damage(listing: dict, market_value: float | None = None) -> DamageAss
     text = " ".join(filter(None, [listing.get("title"), listing.get("short_description"), listing.get("description")]))
     vision = listing.get("vision") or None
     if vision and "_error" not in vision and vision.get("parts") is not None:
-        from .vision import estimate_repair
+        import copy
+
+        from .vision import estimate_repair, sanitize
+        vision = sanitize(copy.deepcopy(vision), listing)   # nowe reguły działają też na starych wynikach
         est = estimate_repair(vision, market_value)
         crisk, cflags = _context_risk(listing, text, with_vision=True)
         return DamageAssessment(
