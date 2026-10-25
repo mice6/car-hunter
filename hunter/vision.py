@@ -265,6 +265,28 @@ def _post_with_retry(cfg: VisionConfig, body: dict) -> dict:
     raise RuntimeError(last)
 
 
+UNDER_CAR_PARTS = {"steering_rack", "suspension_arm", "strut_shock", "driveshaft_hub"}
+
+
+def sanitize(data: dict, listing: dict) -> dict:
+    """Poprawki znanych błędów modelu, na podstawie danych ogłoszenia."""
+    # części podwozia tylko gdy model sam zgłasza uszkodzenie zawieszenia
+    if data.get("suspension_damage") not in ("yes", "likely"):
+        dropped = [p["part"] for p in data.get("parts") or [] if p["part"] in UNDER_CAR_PARTS]
+        if dropped:
+            data["parts"] = [p for p in data["parts"] if p["part"] not in UNDER_CAR_PARTS]
+            data.setdefault("_sanitized", []).append(f"dropped under-car parts: {dropped}")
+    # skrzynia: typ wynika z ogłoszenia, nie z modelu
+    mech = data.get("mechanical_issues") or []
+    gearbox = (listing.get("gearbox") or "").lower()
+    if gearbox == "automatic" and "manual_gearbox_clutch" in mech:
+        data["mechanical_issues"] = ["automatic_gearbox" if m == "manual_gearbox_clutch" else m for m in mech]
+        data.setdefault("_sanitized", []).append("gearbox issue mapped to automatic")
+    elif gearbox == "manual" and "automatic_gearbox" in mech:
+        data["mechanical_issues"] = ["manual_gearbox_clutch" if m == "automatic_gearbox" else m for m in mech]
+    return data
+
+
 def analyze(cfg: VisionConfig, listing: dict) -> dict:
     photos = select_photos(listing.get("photos") or [], cfg.max_images, cfg.image_size)
     if cfg.inline_images:
@@ -289,7 +311,7 @@ def analyze(cfg: VisionConfig, listing: dict) -> dict:
             "finish_reason": choice.get("finish_reason"),
             "prompt_tokens": usage.get("prompt_tokens"), "completion_tokens": usage.get("completion_tokens")}
     try:
-        data = parse_response(content)
+        data = sanitize(parse_response(content), listing)
     except ValueError as e:
         return {"_error": f"parse: {e}", "_raw": content[:4000], "_meta": meta}
     data["_meta"] = meta
@@ -384,7 +406,7 @@ def estimate_repair(v: dict, market_value: float | None) -> VisionEstimate:
         risk += 0.08
         flags.append("nie jeździ")
     if v.get("description_consistent") == "no":
-        risk += 0.12
+        risk += 0.05   # model często zaznacza "no" bez powodu
         flags.append("zdjęcia gorsze niż opis")
 
     cover = v.get("photos_cover") or {}

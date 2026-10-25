@@ -146,3 +146,13 @@ def test_mechanical_issues_from_description():
 def test_airbags_force_at_least_moderate():
     e = vision.estimate_repair(dict(LIGHT, airbags_deployed="yes", overall_severity="light"), 70000)
     assert e.severity == "medium"
+
+
+def test_sanitize_gearbox_and_under_car_parts():
+    v = dict(LIGHT, parts=LIGHT["parts"] + [{"part": "steering_rack", "action": "replace"}],
+             mechanical_issues=["manual_gearbox_clutch"])
+    out = vision.sanitize(json.loads(json.dumps(v)), {"gearbox": "automatic"})
+    assert out["mechanical_issues"] == ["automatic_gearbox"]
+    assert all(p["part"] != "steering_rack" for p in out["parts"])
+    kept = vision.sanitize(dict(json.loads(json.dumps(v)), suspension_damage="yes"), {"gearbox": "manual"})
+    assert any(p["part"] == "steering_rack" for p in kept["parts"])
