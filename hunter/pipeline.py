@@ -222,7 +222,7 @@ WHERE l.kind = 'candidate' AND l.active
   AND e.market_value IS NOT NULL
   AND e.market_value - (l.price_pln + COALESCE(e.fees, 0) + 2500) >= %(min_opt)s
   AND l.price_pln + COALESCE(e.fees, 0) + 2500 <= %(budget)s
-ORDER BY e.market_value - l.price_pln DESC
+ORDER BY e.score DESC NULLS LAST
 LIMIT %(limit)s
 """
 
