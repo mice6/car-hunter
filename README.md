@@ -30,10 +30,10 @@ you save compared with buying an undamaged one, adjusted for risk.
 ## How it works
 
 ```
-candidates  →  enrich  →  market  →  evaluate  →  alert
-damaged cars   VIN,       undamaged    valuation +    Telegram
-(OtoMoto+OLX)  photos,    cars of the  repair +
-               description same models risk
+candidates → enrich → market → evaluate → vision → evaluate → alert
+damaged      VIN,      undamaged  valuation   photos on  repair from  Telegram
+cars         photos,   cars for   + keyword   RunPod     parts table
+             text      valuation  estimate    (Qwen3-VL)
 ```
 
 ```
@@ -79,6 +79,8 @@ docker compose run --rm hunter enrich --limit 300  # VIN, all photos, descriptio
 docker compose run --rm hunter market              # undamaged comparables for valuation
 docker compose run --rm hunter evaluate            # value, estimate, score
 docker compose run --rm hunter top -n 20           # print the ranking
+docker compose run --rm hunter vision --id 123      # photo assessment for one listing (prints JSON)
+docker compose run --rm hunter vision              # photo assessment for the queue
 docker compose run --rm hunter alert               # send Telegram alerts
 ```
 
@@ -91,6 +93,7 @@ hunter/
   sources/otomoto.py   OtoMoto search + listing detail parser
   sources/olx.py       OLX API client, make discovery, price-band pagination
   scoring.py           valuation, damage/risk heuristics, scoring
+  vision.py            RunPod/vLLM client, prompt + JSON schema, parts-based repair estimate
   pipeline.py          candidates → enrich → market → evaluate → alert
   db.py                upserts, price history, detail merge
   http.py              throttled HTTP client with backoff
@@ -112,10 +115,11 @@ HUNTER_TEST_DB=postgresql://... pytest -q   # + database layer (drops the public
 - [x] OtoMoto + OLX scraper, price history, comparable-based valuation, scoring, Telegram alerts
 - [ ] **Global valuation model** (CatBoost) trained on the whole undamaged market, including trim,
       equipment and region. Values rare trims and also flags underpriced undamaged cars.
-- [ ] **Photo damage assessment on RunPod Serverless.** An open-source vision-language model
-      (Qwen-VL) reviews every photo and returns structured JSON: damaged zones, parts to replace,
-      airbags, structural damage, flood signs, drivable or not. The result goes into
-      `listings.vision` and automatically replaces the keyword heuristic.
+- [x] **Photo damage assessment on RunPod Serverless** ([setup guide](docs/RUNPOD.md)). Qwen3-VL reviews
+      up to 12 photos per listing and returns schema-constrained JSON: damaged zones, parts to replace
+      or repair, airbags, structural damage, flood/fire signs, drivability, photo coverage and whether
+      the photos match the description. Repair cost is computed from a parts price table, not by the
+      model. Only listings that can still be a deal are sent, with a daily cap.
 - [ ] **Deep review of the top ~5% with Claude.** Finds contradictions between description and photos
       and drafts questions for the seller.
 - [ ] Parts price lookup (OLX/Allegro) for repair cost estimates
@@ -123,8 +127,9 @@ HUNTER_TEST_DB=postgresql://... pytest -q   # + database layer (drops the public
 
 ## Limitations
 
-- The repair estimate is currently a keyword heuristic over the title and description. It is the
-  weakest part of the system until photo assessment lands.
+- Without a RunPod endpoint, the repair estimate is a keyword heuristic over the title and description.
+  With photo assessment enabled, the parts price table (`hunter/vision.py`) still needs calibration
+  against real repair quotes.
 - Site structure was verified on 2026-10-24. Marketplaces change their frontends; when parsing breaks,
   the tests in `tests/` point to the affected parser.
 - The output is a deal filter, not a buying decision. Always check the VIN history (including US

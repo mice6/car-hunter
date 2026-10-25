@@ -18,13 +18,31 @@ def _print_top(rows):
         return
     for i, r in enumerate(rows, 1):
         flags = "; ".join(((r.get("details") or {}).get("damage") or {}).get("flags") or [])
-        print(f"{i:>2}. {r['title'][:45]:<45} {r['year'] or '':>4} {r['power_hp'] or '':>4}KM "
+        print(f"{i:>2}. [id {r['id']}] {r['title'][:40]:<40} {r['year'] or '':>4} {r['power_hp'] or '':>4}KM "
               f"cena {fmt_pln(r['price_pln']):>11} | rynek {fmt_pln(r['market_value']):>11} ({r['comparables_n']}) "
               f"| naprawa {fmt_pln(r['repair_estimate']):>10} | oszcz. {fmt_pln(r['savings']):>11} "
               f"| ryzyko {float(r['risk'] or 0):.0%} | score {fmt_pln(r['score'])}")
         if flags:
             print(f"    ⚠ {flags}")
         print(f"    {r['url']}")
+
+
+def _print_vision(conn, listing_id: int) -> None:
+    import json
+    r = conn.execute(
+        """SELECT l.title, l.url, l.price_pln, l.vision, e.market_value, e.repair_estimate, e.savings, e.risk,
+                  e.score, e.details FROM listings l LEFT JOIN evaluations e ON e.listing_id = l.id WHERE l.id = %s""",
+        (listing_id,)).fetchone()
+    if not r:
+        print("Nie ma takiego ogłoszenia")
+        return
+    print(json.dumps(r["vision"], ensure_ascii=False, indent=2))
+    dmg = (r["details"] or {}).get("damage") or {}
+    print(f"\n{r['title']}  {r['url']}")
+    print(f"cena {fmt_pln(r['price_pln'])} | rynek {fmt_pln(r['market_value'])} | naprawa {fmt_pln(r['repair_estimate'])}"
+          f" | oszcz. {fmt_pln(r['savings'])} | ryzyko {float(r['risk'] or 0):.0%} | score {fmt_pln(r['score'])}")
+    print("kosztorys:", json.dumps(dmg.get("breakdown"), ensure_ascii=False))
+    print("flagi:", "; ".join(dmg.get("flags") or []))
 
 
 def _due(conn, key: str, hours: float) -> bool:
@@ -56,6 +74,9 @@ def run_loop(cfg, conn):
                 db.deactivate_stale(conn, "market", 24 * 14)
                 _mark(conn, "last_market")
             pipeline.evaluate_all(cfg, conn)
+            if cfg.vision_enabled:
+                pipeline.run_vision(cfg, conn)
+                pipeline.evaluate_all(cfg, conn)
             pipeline.alert(cfg, conn)
         except Exception:
             log.exception("cycle failed")
@@ -77,6 +98,9 @@ def main(argv=None):
     m = sub.add_parser("market", help="pobierz zdrowe auta tych modeli do wyceny")
     m.add_argument("--max-models", type=int, default=400)
     sub.add_parser("evaluate", help="wyceń i oceń kandydatów")
+    vi = sub.add_parser("vision", help="oceń zdjęcia kandydatów modelem na RunPod")
+    vi.add_argument("--limit", type=int)
+    vi.add_argument("--id", type=int, help="tylko jedno ogłoszenie (id z bazy) i wypisz wynik")
     sub.add_parser("alert", help="wyślij alerty Telegram")
     t = sub.add_parser("top", help="pokaż najlepszych kandydatów")
     t.add_argument("-n", type=int, default=20)
@@ -100,6 +124,11 @@ def main(argv=None):
         _mark(conn, "last_market")
     elif args.cmd == "evaluate":
         print(pipeline.evaluate_all(cfg, conn))
+    elif args.cmd == "vision":
+        print(pipeline.run_vision(cfg, conn, args.limit, args.id))
+        if args.id is not None:
+            pipeline.evaluate_all(cfg, conn)
+            _print_vision(conn, args.id)
     elif args.cmd == "alert":
         print(pipeline.alert(cfg, conn))
     elif args.cmd == "top":

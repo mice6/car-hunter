@@ -184,6 +184,65 @@ def evaluate_all(cfg: Config, conn) -> dict:
     return dict(stats)
 
 
+# ------------------------------------------------------------------ ocena zdjęć (RunPod)
+
+VISION_SQL = """
+SELECT l.*, e.market_value AS ev_market, e.fees AS ev_fees
+FROM listings l JOIN evaluations e ON e.listing_id = l.id
+WHERE l.kind = 'candidate' AND l.active
+  AND jsonb_array_length(l.photos) >= %(min_photos)s
+  AND (l.source = 'olx' OR l.enriched_at IS NOT NULL)
+  AND (l.vision IS NULL OR (l.vision ? '_error' AND l.vision_at < now() - interval '1 day'))
+  AND COALESCE(l.rhd, false) = false
+  AND l.power_hp >= %(min_power)s
+  AND e.market_value IS NOT NULL
+  AND e.market_value - (l.price_pln + COALESCE(e.fees, 0) + 2500) >= %(min_opt)s
+  AND l.price_pln + COALESCE(e.fees, 0) + 2500 <= %(budget)s
+ORDER BY e.market_value - l.price_pln DESC
+LIMIT %(limit)s
+"""
+
+
+def vision_config(cfg: Config):
+    from .vision import VisionConfig
+    v = cfg.vision
+    return VisionConfig(api_key=cfg.runpod_api_key, endpoint_id=cfg.runpod_endpoint_id, model=v["model"],
+                        max_images=v["max_images"], image_size=v["image_size"], timeout_s=v["timeout_s"],
+                        concurrency=v["concurrency"])
+
+
+def run_vision(cfg: Config, conn, limit: int | None = None, listing_id: int | None = None) -> dict:
+    from .vision import analyze_many
+    if not cfg.vision_enabled:
+        log.info("vision: RUNPOD_API_KEY/RUNPOD_ENDPOINT_ID not set, skipping")
+        return {"skipped": True}
+    v = cfg.vision
+    if listing_id is not None:
+        rows = conn.execute("SELECT * FROM listings WHERE id = %s", (listing_id,)).fetchall()
+    else:
+        used = conn.execute("SELECT count(*) AS n FROM listings WHERE vision_at > now() - interval '1 day'").fetchone()["n"]
+        room = max(0, v["max_per_day"] - used)
+        n = min(limit or v["max_per_run"], room)
+        if n == 0:
+            log.info("vision: daily limit reached (%d)", used)
+            return {"daily_limit": True}
+        rows = conn.execute(VISION_SQL, {
+            "min_photos": v["min_photos"], "min_power": cfg.criteria["min_power_hp"],
+            "min_opt": v["min_optimistic_savings_pln"], "budget": cfg.criteria["budget_total_pln"], "limit": n,
+        }).fetchall()
+    if not rows:
+        return {"queued": 0}
+    log.info("vision: analysing %d listings", len(rows))
+
+    def save(lst, res):
+        conn.execute("UPDATE listings SET vision = %s, vision_at = now() WHERE id = %s",
+                     (json.dumps(res, ensure_ascii=False), lst["id"]))
+
+    stats = analyze_many(vision_config(cfg), rows, save)
+    log.info("vision: %s", stats)
+    return stats
+
+
 TOP_SQL = """
 SELECT l.id, l.source, l.title, l.url, l.year, l.mileage_km, l.power_hp, l.fuel, l.body_type, l.city,
        l.price_pln, e.market_value, e.comparables_n, e.repair_estimate, e.fees, e.total_cost, e.savings,
@@ -199,8 +258,11 @@ def alert(cfg: Config, conn, max_alerts: int = 10) -> int:
     if not (cfg.telegram_token and cfg.telegram_chat_id):
         log.info("telegram not configured, skipping alerts")
         return 0
+    extra = "AND e.alerted_at IS NULL AND e.score >= %s"
+    if cfg.vision_enabled and cfg.vision.get("require_for_alert", True):
+        extra += " AND e.details->'damage'->>'source' = 'vision'"
     rows = conn.execute(
-        TOP_SQL.format(extra="AND e.alerted_at IS NULL AND e.score >= %s"),
+        TOP_SQL.format(extra=extra),
         (cfg.scoring["min_score_alert_pln"], max_alerts)).fetchall()
     sent = 0
     for r in rows:

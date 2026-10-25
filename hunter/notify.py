@@ -25,11 +25,13 @@ def format_alert(row: dict) -> str:
         html.escape(spec),
         f"Cena: <b>{fmt_pln(row.get('price_pln'))}</b> · {html.escape(row.get('city') or '')}",
         f"Wycena zdrowego: {fmt_pln(row.get('market_value'))} ({row.get('comparables_n')} por.)",
-        f"Naprawa (szac., {dmg.get('severity', '?')}): {fmt_pln(row.get('repair_estimate'))} · opłaty {fmt_pln(row.get('fees'))}",
+        f"Naprawa ({'ze zdjęć' if dmg.get('source') == 'vision' else 'szac. z opisu'}, {dmg.get('severity', '?')}): {fmt_pln(row.get('repair_estimate'))} · opłaty {fmt_pln(row.get('fees'))}",
         f"Oszczędność: <b>{fmt_pln(row.get('savings'))}</b> · ryzyko {float(row.get('risk') or 0):.0%} · score {fmt_pln(row.get('score'))}",
     ]
     if flags:
         lines.append("⚠️ " + html.escape("; ".join(flags)))
+    if dmg.get("notes"):
+        lines.append("🔍 " + html.escape(dmg["notes"]))
     lines.append(html.escape(row.get("url") or ""))
     return "\n".join(lines)
 

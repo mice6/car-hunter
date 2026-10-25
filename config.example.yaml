@@ -34,6 +34,18 @@ scraper:
   eur_pln: 4.25
   sources: [otomoto, olx]
 
+vision:                          # ocena zdjęć na RunPod (wymaga RUNPOD_API_KEY i RUNPOD_ENDPOINT_ID w .env)
+  model: Qwen/Qwen3-VL-8B-Instruct-FP8   # musi być taki sam jak MODEL_NAME w endpoincie
+  max_images: 12
+  image_size: 1024x768
+  min_photos: 4
+  concurrency: 4                 # równoległe zapytania (vLLM batchuje je na jednym GPU)
+  timeout_s: 600                 # zimny start endpointu potrafi trwać 1-3 min
+  max_per_run: 150
+  max_per_day: 600               # twardy limit kosztów
+  min_optimistic_savings_pln: 4000   # wysyłaj tylko auta z szansą na oszczędność
+  require_for_alert: true        # alertuj tylko auta ocenione ze zdjęć
+
 schedule:
   candidates_every_min: 30
   full_sweep_every_hours: 24

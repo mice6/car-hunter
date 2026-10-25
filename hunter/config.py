@@ -24,6 +24,8 @@ class Config:
     database_url: str
     telegram_token: str | None = None
     telegram_chat_id: str | None = None
+    runpod_api_key: str | None = None
+    runpod_endpoint_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     # wygodne skróty
@@ -38,6 +40,14 @@ class Config:
     @property
     def scraper(self) -> dict:
         return self.data["scraper"]
+
+    @property
+    def vision(self) -> dict:
+        return self.data.get("vision") or {}
+
+    @property
+    def vision_enabled(self) -> bool:
+        return bool(self.runpod_api_key and self.runpod_endpoint_id)
 
     @property
     def schedule(self) -> dict:
@@ -57,4 +67,6 @@ def load_config(path: str | None = None) -> Config:
         database_url=os.environ.get("DATABASE_URL", "postgresql://hunter:hunter@localhost:5432/hunter"),
         telegram_token=os.environ.get("TELEGRAM_BOT_TOKEN") or None,
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID") or None,
+        runpod_api_key=os.environ.get("RUNPOD_API_KEY") or None,
+        runpod_endpoint_id=os.environ.get("RUNPOD_ENDPOINT_ID") or None,
     )

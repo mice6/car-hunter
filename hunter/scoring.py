@@ -133,25 +133,51 @@ def _hits(text: str, patterns: list[str]) -> list[str]:
 @dataclass
 class DamageAssessment:
     severity: str                  # light | medium | severe
-    repair_fraction: float         # część wartości rynkowej
+    repair_fraction: float         # część wartości rynkowej (heurystyka)
     risk: float                    # 0..1
     flags: list[str] = field(default_factory=list)
     source: str = "keywords"
+    repair_pln: float | None = None  # kwota z kosztorysu vision (ma pierwszeństwo)
+    notes: str | None = None
+    breakdown: dict | None = None
 
 
-def assess_damage(listing: dict) -> DamageAssessment:
-    """Heurystyka. Jeśli jest wynik modelu vision (listing['vision']), ma pierwszeństwo."""
+def _context_risk(listing: dict, text: str, with_vision: bool) -> tuple[float, list[str]]:
+    """Ryzyka niezależne od zdjęć: pochodzenie, rejestracja, jakość ogłoszenia."""
+    risk, flags = 0.0, []
+    if _hits(text, US_IMPORT):
+        risk += 0.20
+        flags.append("import z USA")
+    if not with_vision and _hits(text, FLOOD):
+        risk += 0.25
+        flags.append("możliwe zalanie")
+    if listing.get("has_registration") is False:
+        risk += 0.10
+        flags.append("brak rejestracji w PL")
+    photos = listing.get("photos") or []
+    if listing.get("enriched_at") and len(photos) < 6:
+        risk += 0.10
+        flags.append(f"mało zdjęć ({len(photos)})")
+    if not (listing.get("description") or "").strip() and listing.get("enriched_at"):
+        risk += 0.05
+        flags.append("brak opisu")
+    return risk, flags
+
+
+def assess_damage(listing: dict, market_value: float | None = None) -> DamageAssessment:
+    """Wynik modelu vision (listing['vision']) ma pierwszeństwo; inaczej heurystyka ze słów kluczowych."""
+    text = " ".join(filter(None, [listing.get("title"), listing.get("short_description"), listing.get("description")]))
     vision = listing.get("vision") or None
-    if vision and vision.get("repair_fraction") is not None:
+    if vision and "_error" not in vision and vision.get("parts") is not None:
+        from .vision import estimate_repair
+        est = estimate_repair(vision, market_value)
+        crisk, cflags = _context_risk(listing, text, with_vision=True)
         return DamageAssessment(
-            severity=vision.get("severity", "medium"),
-            repair_fraction=float(vision["repair_fraction"]),
-            risk=float(vision.get("risk", 0.3)),
-            flags=list(vision.get("flags", [])),
-            source="vision",
+            severity=est.severity, repair_fraction=(est.repair_pln / market_value) if market_value else 0.0,
+            risk=min(est.risk + crisk, 0.9), flags=est.flags + cflags, source="vision",
+            repair_pln=est.repair_pln, notes=vision.get("notes_pl"), breakdown=est.breakdown,
         )
 
-    text = " ".join(filter(None, [listing.get("title"), listing.get("short_description"), listing.get("description")]))
     severe, light, front = _hits(text, SEVERE), _hits(text, LIGHT), _hits(text, FRONT)
     flags: list[str] = []
     risk = 0.10
@@ -168,23 +194,8 @@ def assess_damage(listing: dict) -> DamageAssessment:
     else:
         severity, frac = "medium", 0.15
 
-    if _hits(text, US_IMPORT):
-        risk += 0.20
-        flags.append("import z USA")
-    if _hits(text, FLOOD):
-        risk += 0.25
-        flags.append("możliwe zalanie")
-    if listing.get("has_registration") is False:
-        risk += 0.10
-        flags.append("brak rejestracji w PL")
-    photos = listing.get("photos") or []
-    if listing.get("enriched_at") and len(photos) < 6:
-        risk += 0.10
-        flags.append(f"mało zdjęć ({len(photos)})")
-    if not (listing.get("description") or "").strip() and listing.get("enriched_at"):
-        risk += 0.05
-        flags.append("brak opisu")
-    return DamageAssessment(severity, frac, min(risk, 0.9), flags)
+    crisk, cflags = _context_risk(listing, text, with_vision=False)
+    return DamageAssessment(severity, frac, min(risk + crisk, 0.9), flags + cflags)
 
 
 # ---------------------------------------------------------------- scoring
@@ -207,7 +218,7 @@ class Evaluation:
 
 def evaluate(listing: dict, valuation: Valuation, crit: dict, sc: dict) -> Evaluation:
     price = float(listing["price_pln"]) if listing.get("price_pln") is not None else None
-    dmg = assess_damage(listing)
+    dmg = assess_damage(listing, valuation.value)
     details: dict = {"damage": dmg.__dict__, "reasons": []}
 
     reasons = details["reasons"]
@@ -225,7 +236,7 @@ def evaluate(listing: dict, valuation: Valuation, crit: dict, sc: dict) -> Evalu
         return Evaluation(None, valuation.method, valuation.n, None, None, None, None, dmg.risk, None, False, details)
 
     market = valuation.value * sc["asking_to_transaction"] * (1 - sc.get("damage_history_discount", 0))
-    repair = max(2500.0, valuation.value * dmg.repair_fraction)
+    repair = dmg.repair_pln if dmg.repair_pln is not None else max(2500.0, valuation.value * dmg.repair_fraction)
     f = sc["fees"]
     fees = price * f["pcc_rate"] + f["registration_inspection_pln"] + f["transport_pln"]
     if listing.get("has_registration") is False or listing.get("imported"):

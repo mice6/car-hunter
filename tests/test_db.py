@@ -76,3 +76,37 @@ def test_evaluate_all_and_top(conn):
     rows = pipeline.top(conn, 5)
     assert rows[0]["id"] == good and float(rows[0]["savings"]) > 0
     assert all(r["id"] != 0 for r in rows)
+
+
+def test_vision_prefilter_and_save(conn, monkeypatch):
+    from hunter import vision as vmod
+    rnd = random.Random(3)
+    for i in range(30):
+        y = rnd.randint(2016, 2020)
+        db.upsert_listing(conn, _item(2000 + i, year=y, price=int(80000 * 1.1 ** (y - 2016))), "market", 4.25)
+    good, _ = db.upsert_listing(conn, _item(20, price=25000), "candidate", 4.25)
+    db.apply_detail(conn, good, {"photos": [f"p{i}/image;s=1280x960" for i in range(8)], "active": True})
+    few, _ = db.upsert_listing(conn, _item(21, price=25000), "candidate", 4.25)   # 1 miniatura, nie wzbogacony
+    pricey, _ = db.upsert_listing(conn, _item(22, price=52000), "candidate", 4.25)
+    db.apply_detail(conn, pricey, {"photos": ["x"] * 8, "active": True})
+    cfg = load_config("/nonexistent.yaml")
+    cfg.runpod_api_key, cfg.runpod_endpoint_id = "k", "e"
+    pipeline.evaluate_all(cfg, conn)
+
+    seen = []
+
+    def fake_analyze(vcfg, lst):
+        seen.append(lst["id"])
+        return {"parts": [], "damage_zones": [], "photos_cover": {}, "overall_severity": "light",
+                "confidence": 0.9, "notes_pl": "ok"}
+
+    monkeypatch.setattr(vmod, "analyze", fake_analyze)
+    assert pipeline.run_vision(cfg, conn)["ok"] == 1
+    assert seen == [good]
+    row = conn.execute("SELECT vision, vision_at FROM listings WHERE id=%s", (good,)).fetchone()
+    assert row["vision"]["notes_pl"] == "ok" and row["vision_at"]
+    assert pipeline.run_vision(cfg, conn) == {"queued": 0}   # nie powtarza
+    pipeline.evaluate_all(cfg, conn)
+    src = conn.execute("SELECT details->'damage'->>'source' AS s FROM evaluations WHERE listing_id=%s", (good,)).fetchone()
+    assert src["s"] == "vision"
+    assert few != good and pricey != good
