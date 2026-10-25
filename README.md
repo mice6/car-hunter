@@ -88,6 +88,18 @@ docker compose logs -f hunter
 The first run does a full sweep and builds the market dataset, which takes a few hours because
 requests are deliberately slow. After that, a 30-minute incremental cycle runs automatically.
 
+### Web panel
+
+The `panel` service serves a small web UI on port 8080 (set `PANEL_PASSWORD` in `.env`):
+
+- **Ranking**: the current shortlist with market value, repair estimate, risk, flags, the vision
+  model's note, and a button to run photo assessment for a single car.
+- **Settings**: every search criterion, damage limit, alert and RunPod option as a form with
+  validation. Saving merges the changes into `config.yaml` and keeps a copy in `config-backups/`.
+  The scraper loop picks the new settings up on its next cycle, without a restart.
+
+Expose it only on your LAN or VPN (e.g. Tailscale), or put it behind Cloudflare Access.
+
 ### Manual commands
 
 ```bash

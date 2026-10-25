@@ -116,10 +116,16 @@ def main(argv=None):
     t = sub.add_parser("top", help="pokaż najlepszych kandydatów")
     t.add_argument("-n", type=int, default=20)
     sub.add_parser("run", help="pętla: wszystko według harmonogramu")
+    pa = sub.add_parser("panel", help="panel web (ranking + ustawienia)")
+    pa.add_argument("--port", type=int, default=8080)
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if args.cmd == "panel":
+        from .panel import serve
+        serve(port=args.port)
+        return
     cfg = load_config(args.config)
     conn = db.connect(cfg.database_url)
     db.init_db(conn)
