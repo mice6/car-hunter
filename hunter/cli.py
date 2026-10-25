@@ -107,6 +107,8 @@ def main(argv=None):
     vi.add_argument("--limit", type=int)
     vi.add_argument("--id", type=int, help="tylko jedno ogłoszenie (id z bazy) i wypisz wynik")
     vi.add_argument("--dry", action="store_true", help="pokaż kolejkę, nic nie wysyłaj")
+    vi.add_argument("--endpoint", help="inny endpoint RunPod (test A/B)")
+    vi.add_argument("--model", help="nazwa modelu dla tego endpointu")
     sub.add_parser("alert", help="wyślij alerty Telegram")
     t = sub.add_parser("top", help="pokaż najlepszych kandydatów")
     t.add_argument("-n", type=int, default=20)
@@ -131,6 +133,10 @@ def main(argv=None):
     elif args.cmd == "evaluate":
         print(pipeline.evaluate_all(cfg, conn))
     elif args.cmd == "vision":
+        if args.endpoint:
+            cfg.runpod_endpoint_id = args.endpoint
+        if args.model:
+            cfg.data["vision"]["model"] = args.model
         res = pipeline.run_vision(cfg, conn, args.limit, args.id, dry=args.dry)
         if args.dry:
             for q in res.get("queue", []):

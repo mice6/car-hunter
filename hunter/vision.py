@@ -58,6 +58,23 @@ PART_COSTS: dict[str, tuple[int, int]] = {
     "dashboard": (3000, 1200),
     "seat": (1500, 600),
 }
+# Usterki mechaniczne/elektryczne zgłoszone w OPISIE (zdjęcia ich nie pokażą). Koszt warsztatowy, PLN.
+MECHANICAL_COSTS: dict[str, int] = {
+    "automatic_gearbox": 7000,      # regeneracja/mechatronika automatu
+    "manual_gearbox_clutch": 3500,
+    "engine_major": 12000,          # silnik do remontu/wymiany
+    "engine_minor": 2500,           # osprzęt, wycieki, czujniki
+    "turbo": 3500,
+    "injectors_fuel": 3000,
+    "dpf_egr": 2500,
+    "timing_chain_belt": 3500,
+    "cooling_system": 1500,
+    "electrical_electronics": 2000,
+    "air_conditioning": 1500,
+    "awd_driveline": 3500,
+    "brakes": 1200,
+    "warning_light_unknown": 1500,
+}
 AIRBAGS_SET = 6500        # poduszki czołowe + moduł + napinacze/pasy + naprawa deski
 ADAS_FRONT = 1800         # radar/kamera + kalibracja przy uderzeniu w przód
 GEOMETRY_DIAG = 900       # geometria, diagnostyka, drobnica
@@ -66,6 +83,8 @@ HIDDEN_CONTINGENCY = 0.15
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
+        "photo_observations": {"type": "array", "maxItems": 12,
+                               "items": {"type": "string", "maxLength": 160}},
         "photos_cover": {
             "type": "object",
             "properties": {k: {"type": "boolean"} for k in
@@ -80,6 +99,7 @@ RESPONSE_SCHEMA = {
             "type": "object",
             "properties": {"part": {"enum": list(PART_COSTS)}, "action": {"enum": ["replace", "repair"]}},
             "required": ["part", "action"]}},
+        "mechanical_issues": {"type": "array", "maxItems": 8, "items": {"enum": list(MECHANICAL_COSTS)}},
         "airbags_deployed": {"enum": TRI},
         "structural_damage": {"enum": TRI},
         "suspension_damage": {"enum": TRI},
@@ -91,25 +111,38 @@ RESPONSE_SCHEMA = {
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "notes_pl": {"type": "string", "maxLength": 400},
     },
-    "required": ["photos_cover", "damage_zones", "parts", "airbags_deployed", "structural_damage",
+    "required": ["photo_observations", "mechanical_issues", "photos_cover", "damage_zones", "parts", "airbags_deployed", "structural_damage",
                  "suspension_damage", "flood_signs", "fire_signs", "drivable", "description_consistent",
                  "overall_severity", "confidence", "notes_pl"],
 }
 
 SYSTEM_PROMPT = """You are an experienced collision-repair estimator in Poland reviewing a used-car listing \
-of a DAMAGED car. Look at every photo carefully. Report only what is visible or strongly implied; do not guess \
-optimistically. Sellers often hide the worst damage: if a side of the car is not shown, mark it as not covered.
+of a DAMAGED car. Report only what is visible or stated; do not guess optimistically.
+
+Work in this order:
+1. photo_observations: one short English line per photo, in order: which view it is (e.g. "front-left 3/4", \
+"rear", "interior dashboard") and every defect you see on it (dents, creases, cracks, gaps, deployed airbags).
+2. Then fill the remaining fields based ONLY on those observations and the seller description.
 
 Rules:
-- parts: list every exterior/mechanical part that needs work. Repeat a part for each side (two doors = two entries). \
-"replace" if torn, cracked, deeply creased, or missing; "repair" for dents/scratches that a body shop can fix.
-- airbags_deployed: "yes" if any airbag is visibly deployed or the airbag light/torn dashboard is visible.
+- photos_cover: a side counts as covered if any photo shows it, including 3/4 views (front-left 3/4 covers front \
+and left).
+- parts: exterior body parts and visible mechanical parts needing work. One entry per physical part (two damaged \
+doors = two entries, never the same part twice for one side). "replace" if torn, cracked, deeply creased or \
+missing; "repair" for dents/scratches a body shop can fix. A crease or dent on the bonnet means "hood".
+- steering_rack, suspension_arm, strut_shock, driveshaft_hub are under the car: list them only if a wheel is \
+visibly misaligned or the description says so. A deployed steering-wheel airbag is NOT steering_rack; report \
+it via airbags_deployed.
+- mechanical_issues: faults stated in the DESCRIPTION (gearbox not shifting, engine knocking, warning light, \
+turbo, injectors...). Photos rarely show these; the description is the source.
+- airbags_deployed: "yes" if any airbag is deployed, covered with tape/cloth, missing, or the dashboard is torn.
 - structural_damage: crushed/bent chassis rails, pillars, sills, roof, or panel gaps that indicate a bent shell.
 - flood_signs: silt or water lines in the interior, corrosion on seat rails, mud in the engine bay.
-- description_consistent: "no" if the photos show clearly worse damage than the seller describes.
-- confidence: how sure you are given photo quality and coverage.
-- notes_pl: 1-3 short sentences IN POLISH: what is damaged and what to check during inspection.
-- Each damage zone appears at most once. Never list the same part+side twice. Keep the answer compact.
+- drivable: from the description first ("odpala, jeździ" = yes; "nie odpala" = no); a gearbox fault = "likely".
+- description_consistent: "no" ONLY if photos show clearly worse damage than described; a short or vague \
+description that matches the photos is "yes".
+- overall_severity must agree with the parts list and airbags (deployed airbags = at least "moderate").
+- notes_pl: 1-3 short, grammatically correct sentences IN POLISH: what is damaged and what to check.
 Answer with compact JSON only (no indentation), matching the schema."""
 
 
@@ -242,7 +275,7 @@ def analyze(cfg: VisionConfig, listing: dict) -> dict:
         "model": cfg.model,
         "messages": build_messages(listing, photos),
         "temperature": 0.1,
-        "max_tokens": 2000,
+        "max_tokens": 2500,
         "repetition_penalty": 1.05,
         "response_format": {"type": "json_schema",
                             "json_schema": {"name": "damage_assessment", "schema": RESPONSE_SCHEMA}},
@@ -311,6 +344,16 @@ def estimate_repair(v: dict, market_value: float | None) -> VisionEstimate:
     extras = GEOMETRY_DIAG
     flags: list[str] = []
     risk = 0.10
+    mech = [m for m in dict.fromkeys(v.get("mechanical_issues") or []) if m in MECHANICAL_COSTS]
+    for m in mech:
+        extras += MECHANICAL_COSTS[m]
+        breakdown[f"mech:{m}"] = MECHANICAL_COSTS[m]
+    if mech:
+        flags.append("usterki z opisu: " + ", ".join(mech))
+        risk += 0.05 * len(mech) + (0.10 if {"engine_major", "automatic_gearbox"} & set(mech) else 0)
+    sev = v.get("overall_severity") or "moderate"
+    if v.get("airbags_deployed") in ("yes", "likely") and sev in ("cosmetic", "light"):
+        sev = "moderate"   # model bywa niekonsekwentny
     if v.get("airbags_deployed") in ("yes", "likely"):
         extras += AIRBAGS_SET
         breakdown["airbags"] = AIRBAGS_SET
@@ -356,7 +399,6 @@ def estimate_repair(v: dict, market_value: float | None) -> VisionEstimate:
 
     contingency = HIDDEN_CONTINGENCY + 0.05 * len(missing) + (0.10 if structural in ("yes", "likely") else 0)
     repair = (parts_cost + extras) * seg * (1 + contingency)
-    sev = v.get("overall_severity") or "moderate"
     if sev == "total_loss":
         risk += 0.30
         flags.append("model: szkoda całkowita")

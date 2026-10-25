@@ -132,3 +132,17 @@ def test_parse_truncated_and_repeated():
     assert d["_repaired"]
     full = vision.parse_response(raw)
     assert len(full["parts"]) == 2 and len(full["damage_zones"]) == 1
+
+
+def test_mechanical_issues_from_description():
+    v = dict(LIGHT, mechanical_issues=["automatic_gearbox", "automatic_gearbox"])
+    e = vision.estimate_repair(v, 70000)
+    base = vision.estimate_repair(LIGHT, 70000)
+    assert e.breakdown["mech:automatic_gearbox"] == vision.MECHANICAL_COSTS["automatic_gearbox"]
+    assert e.repair_pln > base.repair_pln + 7000 and e.risk > base.risk
+    assert any("usterki z opisu" in f for f in e.flags)
+
+
+def test_airbags_force_at_least_moderate():
+    e = vision.estimate_repair(dict(LIGHT, airbags_deployed="yes", overall_severity="light"), 70000)
+    assert e.severity == "medium"
