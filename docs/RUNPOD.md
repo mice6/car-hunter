@@ -89,8 +89,9 @@ docker compose run --rm hunter vision --dry --limit 5
 docker compose run --rm hunter vision --limit 3
 ```
 
-After checking cost and quality, set `vision.auto: true`. Every cycle then runs
-`evaluate → vision (queue) → evaluate → alert`, within `max_per_run` and `max_per_day`.
+After checking cost and quality, set `vision.auto: true`. The loop then sends one batch every
+`vision.every_hours` (default 3) within `max_per_run` and `max_per_day`. Batching matters: every
+batch wakes the endpoint once, and a cold start of the 30B model costs a few minutes of GPU time.
 
 ## What is sent
 

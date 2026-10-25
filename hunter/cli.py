@@ -79,9 +79,12 @@ def run_loop(cfg, conn):
                 db.deactivate_stale(conn, "market", 24 * 14)
                 _mark(conn, "last_market")
             pipeline.evaluate_all(cfg, conn)
-            if cfg.vision_auto:
-                pipeline.run_vision(cfg, conn)
-                pipeline.evaluate_all(cfg, conn)
+            # zdjęcia pakietami co N godzin: jeden zimny start endpointu zamiast 48 dziennie
+            if cfg.vision_auto and _due(conn, "last_vision", cfg.vision.get("every_hours", 3)):
+                res = pipeline.run_vision(cfg, conn)
+                _mark(conn, "last_vision")
+                if res.get("ok") or res.get("error"):
+                    pipeline.evaluate_all(cfg, conn)
             pipeline.alert(cfg, conn)
         except Exception:
             log.exception("cycle failed")
