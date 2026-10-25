@@ -120,3 +120,19 @@ def test_vision_prefilter_and_save(conn, monkeypatch):
     assert few != good and pricey != good
     q = pipeline.run_vision(cfg, conn, dry=True)
     assert q == {"queue": []}
+
+
+def test_vision_queue_skips_cars_that_cannot_fit_budget(conn):
+    for i in range(30):
+        db.upsert_listing(conn, _item(3000 + i, model="a", year=2018, mileage_km=90000, price=120000), "market", 4.25)
+        db.upsert_listing(conn, _item(4000 + i, model="b", year=2018, mileage_km=90000, price=70000), "market", 4.25)
+    # 45k przy rynku 120k: min. naprawa 0.25*75k=18.75k -> 66k > 55k (stara reguła 2.5k by go przepuściła)
+    pricey, _ = db.upsert_listing(conn, _item(30, model="a", year=2018, mileage_km=90000, price=45000), "candidate", 4.25)
+    # 20k przy rynku 70k: 20k + ~2k + 12.5k = ~35k -> mieści się
+    fits, _ = db.upsert_listing(conn, _item(31, model="b", year=2018, mileage_km=90000, price=20000), "candidate", 4.25)
+    for lid in (pricey, fits):
+        db.apply_detail(conn, lid, {"photos": ["x"] * 8, "active": True})
+    cfg = load_config("/nonexistent.yaml")
+    pipeline.evaluate_all(cfg, conn)
+    ids = [q["id"] for q in pipeline.run_vision(cfg, conn, dry=True)["queue"]]
+    assert ids == [fits]

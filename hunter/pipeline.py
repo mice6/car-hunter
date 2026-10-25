@@ -219,8 +219,11 @@ WHERE l.kind = 'candidate' AND l.active
   AND (l.vision IS NULL OR (l.vision ? '_error' AND l.vision_at < now() - interval '1 day'))
   AND (e.details->>'criteria_ok')::boolean
   AND e.market_value IS NOT NULL
-  AND e.market_value - (l.price_pln + COALESCE(e.fees, 0) + 2500) >= %(min_opt)s
-  AND l.price_pln + COALESCE(e.fees, 0) + 2500 <= %(budget)s
+  -- najlepszy możliwy wynik po ocenie zdjęć: naprawa nie spadnie poniżej max(2500, gap_share * różnica)
+  AND e.market_value - (l.price_pln + COALESCE(e.fees, 0) + GREATEST(2500,
+        %(gap_share)s * ((e.details->>'market_raw')::numeric - l.price_pln))) >= %(min_opt)s
+  AND l.price_pln + COALESCE(e.fees, 0) + GREATEST(2500,
+        %(gap_share)s * ((e.details->>'market_raw')::numeric - l.price_pln)) <= %(budget)s
 ORDER BY e.score DESC NULLS LAST
 LIMIT %(limit)s
 """
@@ -289,6 +292,7 @@ def run_vision(cfg: Config, conn, limit: int | None = None, listing_id: int | No
         rows = conn.execute(VISION_SQL, {
             "min_photos": v["min_photos"],
             "min_opt": v["min_optimistic_savings_pln"], "budget": cfg.criteria["budget_total_pln"], "limit": n,
+            "gap_share": cfg.scoring.get("vision_min_gap_share", 0.25),
         }).fetchall()
     if not dry and listing_id is None:
         rows = _ensure_details(cfg, conn, rows, v["min_photos"])
