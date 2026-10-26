@@ -291,6 +291,79 @@ def criteria_failures(listing: dict, crit: dict) -> list[str]:
 
 SEVERITY_ORDER = {"light": 1, "medium": 2, "severe": 3}
 
+NOT_DRIVABLE = [r"nie odpala", r"nie jeźdz", r"nie jezdz", r"nie jeździ", r"nie jezdzi", r"nie uruchamia",
+                r"do holowania", r"tylko lawet", r"nie porusza"]
+DRIVABLE = [r"jeżdż", r"jezdz", r"jeździ", r"jezdzi", r"odpala", r"sprawn", r"na chodzie", r"porusza się",
+            r"porusza sie", r"w pełni sprawn", r"mechanicznie (?:ok|sprawn|bez zarzutu)"]
+AIRBAG_WORDS = [r"poduszk", r"airbag", r"pasy wystrzel", r"napinacz"]
+REGISTERED = [r"zarejestrowan", r"na polskich tablicach", r"opłacon", r"oplacon"]
+
+
+def text_of(listing: dict) -> str:
+    return " ".join(filter(None, [listing.get("title"), listing.get("short_description"), listing.get("description")]))
+
+
+def text_signals(listing: dict) -> dict:
+    t = text_of(listing)
+    not_drivable = bool(_hits(t, NOT_DRIVABLE))
+    t_wo_neg = re.sub(r"nie (?:odpala|jeźdz|jezdz|jeździ|jezdzi|uruchamia|porusza)\w*", " ", t, flags=re.I)
+    return {
+        "light": bool(_hits(t, LIGHT)),
+        "severe": bool(_hits(t, SEVERE)),
+        "airbags": bool(_hits(t, AIRBAG_WORDS)),
+        "drivable": (not not_drivable) and bool(_hits(t_wo_neg, DRIVABLE)),
+        "not_drivable": not_drivable,
+        "registered": listing.get("has_registration") is True or bool(_hits(t, REGISTERED)),
+        "us_import": bool(_hits(t, US_IMPORT)),
+        "has_description": len((listing.get("description") or "").strip()) >= 40,
+    }
+
+
+def fingerprint(listing: dict) -> str:
+    """To samo auto wystawione ponownie / na dwóch portalach -> ten sam odcisk."""
+    vin = (listing.get("vin") or "").upper()
+    if re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", vin):
+        return "vin:" + vin
+    km = listing.get("mileage_km")
+    return "|".join(str(x) for x in [
+        (listing.get("make") or "").lower(), (listing.get("model") or "").lower(), listing.get("year"),
+        listing.get("power_hp"), round(km / 5000) if km else None, (listing.get("fuel") or "")])
+
+
+def gem_check(listing: dict, valuation: "Valuation", ratio: float, savings: float, risk: float,
+              dmg: "DamageAssessment", sig: dict, g: dict) -> tuple[bool, list[str]]:
+    """Perełka: wszystkie warunki naraz. Zwraca (czy, lista niespełnionych)."""
+    miss = []
+    if valuation.n < g.get("min_comparables", 10):
+        miss.append(f"mało porównań ({valuation.n})")
+    if not (g.get("min_ratio", 0.5) <= ratio <= g.get("max_ratio", 0.85)):
+        miss.append(f"cena {ratio:.0%} rynku poza {g.get('min_ratio', 0.5):.0%}-{g.get('max_ratio', 0.85):.0%}")
+    vision = listing.get("vision") if dmg.source == "vision" else None
+    if vision:
+        if dmg.severity == "severe" or vision.get("airbags_deployed") in ("yes", "likely") \
+                or vision.get("structural_damage") in ("yes", "likely"):
+            miss.append("szkoda ze zdjęć za duża")
+    else:
+        if not sig["light"]:
+            miss.append("opis nie mówi o lekkiej szkodzie")
+        if sig["severe"] or sig["airbags"]:
+            miss.append("opis wskazuje poważną szkodę")
+        if not sig["has_description"]:
+            miss.append("brak opisu")
+    if g.get("require_drivable", True):
+        drivable = (vision or {}).get("drivable") in ("yes", "likely") if vision else sig["drivable"]
+        if not drivable or sig["not_drivable"]:
+            miss.append("brak potwierdzenia, że jeździ")
+    if g.get("require_registered", False) and not sig["registered"]:
+        miss.append("brak potwierdzenia rejestracji")
+    if g.get("exclude_us_imports", True) and sig["us_import"]:
+        miss.append("import z USA")
+    if savings < g.get("min_savings_pln", 15000):
+        miss.append(f"oszczędność < {g.get('min_savings_pln', 15000):,.0f} zł".replace(",", " "))
+    if risk > g.get("max_risk", 0.3):
+        miss.append(f"ryzyko {risk:.0%}")
+    return not miss, miss
+
 
 def damage_failures(vision: dict | None, dmg: "DamageAssessment", crit: dict) -> list[str]:
     """Twarde limity szkody - działają tylko, gdy auto ma ocenę ze zdjęć."""
@@ -341,12 +414,22 @@ def evaluate(listing: dict, valuation: Valuation, crit: dict, sc: dict, prefs: d
         repair = max(dmg.repair_pln, gap_floor)
         details["repair_basis"] = "vision" if dmg.repair_pln >= gap_floor else "vision+gap_floor"
     else:
-        # Bez zdjęć: sprzedawca zna szkodę lepiej niż słowa kluczowe. Zakładamy, że część różnicy
-        # cena-rynek to realna szkoda (rynek wycenia ją lepiej niż nasza heurystyka).
-        heuristic = valuation.value * dmg.repair_fraction
-        implied = sc.get("implied_damage_share", 0.5) * max(0.0, valuation.value - price)
-        repair = max(2500.0, heuristic, implied)
-        details["repair_basis"] = "implied" if implied > heuristic else "keywords"
+        sig = text_signals(listing)
+        g = sc.get("gem") or {}
+        gap = max(0.0, valuation.value - price)
+        light_case = (sig["light"] and not sig["severe"] and not sig["airbags"] and not sig["not_drivable"]
+                      and g.get("min_ratio", 0.5) <= ratio)
+        if light_case:
+            # Opis mówi o lekkiej szkodzie, a cena nie jest ceną wraku: kosztorys lekkiej naprawy z zapasem.
+            repair = max(3000.0, valuation.value * g.get("light_repair_share", 0.08),
+                         g.get("light_gap_share", 0.2) * gap)
+            details["repair_basis"] = "light_text"
+        else:
+            # Sprzedawca zna szkodę lepiej niż słowa kluczowe: część różnicy cena-rynek to realna szkoda.
+            heuristic = valuation.value * dmg.repair_fraction
+            implied = sc.get("implied_damage_share", 0.5) * gap
+            repair = max(2500.0, heuristic, implied)
+            details["repair_basis"] = "implied" if implied > heuristic else "keywords"
     f = sc["fees"]
     fees = price * f["pcc_rate"] + f["registration_inspection_pln"] + f["transport_pln"]
     if listing.get("has_registration") is False or listing.get("imported"):
@@ -376,6 +459,14 @@ def evaluate(listing: dict, valuation: Valuation, crit: dict, sc: dict, prefs: d
 
     hard_fail = [r for r in reasons if not r.startswith("+")]
     details["market_raw"] = valuation.value
+    details["fp"] = fingerprint(listing)
+    sig = text_signals(listing)
+    details["signals"] = sig
+    if hard_fail:
+        details["gem"], details["gem_missing"] = False, ["nie spełnia kryteriów"]
+    else:
+        details["gem"], details["gem_missing"] = gem_check(listing, valuation, ratio, savings, dmg.risk, dmg, sig,
+                                                           sc.get("gem") or {})
     return Evaluation(
         market_value=round(market, 0), valuation_method=valuation.method, comparables_n=valuation.n,
         repair_estimate=round(repair, 0), fees=round(fees, 0), total_cost=round(total, 0),

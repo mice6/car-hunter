@@ -18,7 +18,8 @@ def _print_top(rows):
         return
     for i, r in enumerate(rows, 1):
         flags = "; ".join(((r.get("details") or {}).get("damage") or {}).get("flags") or [])
-        print(f"{i:>2}. [id {r['id']}] {r['title'][:40]:<40} {r['year'] or '':>4} {r['power_hp'] or '':>4}KM "
+        gem = "💎" if (r.get("details") or {}).get("gem") else "  "
+        print(f"{i:>2}.{gem}[id {r['id']}] {r['title'][:40]:<40} {r['year'] or '':>4} {r['power_hp'] or '':>4}KM "
               f"cena {fmt_pln(r['price_pln']):>11} | rynek {fmt_pln(r['market_value']):>11} ({r['comparables_n']}) "
               f"| naprawa {fmt_pln(r['repair_estimate']):>10} | oszcz. {fmt_pln(r['savings']):>11} "
               f"| ryzyko {float(r['risk'] or 0):.0%} | score {fmt_pln(r['score'])}")
@@ -115,6 +116,7 @@ def main(argv=None):
     sub.add_parser("alert", help="wyślij alerty Telegram")
     t = sub.add_parser("top", help="pokaż najlepszych kandydatów")
     t.add_argument("-n", type=int, default=20)
+    t.add_argument("--gems", action="store_true", help="tylko perełki")
     sub.add_parser("run", help="pętla: wszystko według harmonogramu")
     pa = sub.add_parser("panel", help="panel web (ranking + ustawienia)")
     pa.add_argument("--port", type=int, default=8080)
@@ -162,7 +164,7 @@ def main(argv=None):
     elif args.cmd == "alert":
         print(pipeline.alert(cfg, conn))
     elif args.cmd == "top":
-        _print_top(pipeline.top(conn, args.n))
+        _print_top(pipeline.top(conn, args.n, gems_only=args.gems))
     elif args.cmd == "run":
         run_loop(cfg, conn)
 

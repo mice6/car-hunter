@@ -75,8 +75,21 @@ GROUPS: list[tuple[str, str, list[Field]]] = [
         Field("preferences", "makes", "list", "Marki", help="np. volvo, mazda"),
         Field("scoring", "pref_bonus_pln", "int", "Premia [zł]", min=0),
     ]),
+    ("perla", "💎 Perełka (alert tylko gdy spełnione wszystko)", [
+        Field("alerts", "gems_only", "bool", "Telegram tylko dla perełek"),
+        Field("scoring", "gem.min_savings_pln", "int", "Oszczędność min. [zł]", min=0,
+              help="po naprawie i opłatach, względem zdrowego egzemplarza"),
+        Field("scoring", "gem.min_ratio", "float", "Cena od [% rynku]", min=0, max=1, help="0.5 = 50%"),
+        Field("scoring", "gem.max_ratio", "float", "Cena do [% rynku]", min=0, max=1),
+        Field("scoring", "gem.min_comparables", "int", "Porównań min.", min=3, max=200, help="pewność wyceny"),
+        Field("scoring", "gem.max_risk", "float", "Ryzyko max", min=0, max=1),
+        Field("scoring", "gem.require_drivable", "bool", "Wymagaj: jeździ / odpala"),
+        Field("scoring", "gem.require_registered", "bool", "Wymagaj: zarejestrowany w PL"),
+        Field("scoring", "gem.exclude_us_imports", "bool", "Bez importów z USA"),
+        Field("alerts", "max_per_cycle", "int", "Alertów max na cykl", min=1, max=20),
+    ]),
     ("alerty", "Alerty i ocena zdjęć", [
-        Field("scoring", "min_score_alert_pln", "int", "Alert od score [zł]", min=0),
+        Field("scoring", "min_score_alert_pln", "int", "Alert od score [zł] (gdy nie tylko perełki)", min=0),
         Field("vision", "auto", "bool", "Automatyczna ocena zdjęć (RunPod)"),
         Field("vision", "require_for_alert", "bool", "Alert tylko po ocenie zdjęć"),
         Field("vision", "every_hours", "float", "Pakiet co [h]", min=0.5, max=48),
@@ -96,7 +109,18 @@ ALL_FIELDS = [f for _, _, fs in GROUPS for f in fs]
 
 
 def get_value(data: dict, f: Field) -> Any:
-    return (data.get(f.section) or {}).get(f.key)
+    cur: Any = data.get(f.section) or {}
+    for part in f.key.split("."):
+        cur = (cur or {}).get(part) if isinstance(cur, dict) else None
+    return cur
+
+
+def _set(out: dict, section: str, key: str, val: Any) -> None:
+    cur = out.setdefault(section, {})
+    parts = key.split(".")
+    for p in parts[:-1]:
+        cur = cur.setdefault(p, {})
+    cur[parts[-1]] = val
 
 
 class FormError(ValueError):
@@ -148,7 +172,7 @@ def parse_form(form: dict[str, Any]) -> dict:
         except ValueError as e:
             errors[f.name] = str(e) if str(e) else "zła wartość"
             continue
-        out.setdefault(f.section, {})[f.key] = val
+        _set(out, f.section, f.key, val)
 
     if not errors:
         c = out.get("criteria", {})
@@ -165,11 +189,12 @@ def parse_form(form: dict[str, Any]) -> dict:
 
 
 def merge_into(user_cfg: dict, changes: dict) -> dict:
-    merged = {k: (dict(v) if isinstance(v, dict) else v) for k, v in (user_cfg or {}).items()}
-    for section, kv in changes.items():
-        merged.setdefault(section, {})
-        merged[section].update(kv)
-    return merged
+    def deep(a: dict, b: dict) -> dict:
+        out = dict(a)
+        for k, v in b.items():
+            out[k] = deep(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+        return out
+    return deep(user_cfg or {}, changes)
 
 
 def save_config(path: str | Path, changes: dict, keep_backups: int = 20) -> Path:

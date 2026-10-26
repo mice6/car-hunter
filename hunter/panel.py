@@ -16,7 +16,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from . import db, pipeline
 from .config import load_config
 from .notify import fmt_pln
-from .settings import GROUPS, FormError, get_value, parse_form, save_config
+from .settings import GROUPS, FormError, _set, get_value, parse_form, save_config
 
 log = logging.getLogger(__name__)
 security = HTTPBasic()
@@ -92,12 +92,16 @@ def create_app() -> FastAPI:
         return {"ok": True}
 
     @app.get("/", response_class=HTMLResponse)
-    def ranking(request: Request, n: int = 30, msg: str = "", _=Depends(require_auth), c=Depends(conn)):
-        rows = pipeline.top(c, min(max(n, 5), 200))
+    def ranking(request: Request, n: int = 30, msg: str = "", gems: int = 0, _=Depends(require_auth),
+                c=Depends(conn)):
+        rows = pipeline.top(c, min(max(n, 5), 200), gems_only=bool(gems))
         st = c.execute("""SELECT
               (SELECT count(*) FROM listings WHERE kind='candidate' AND active) AS cand,
               (SELECT count(*) FROM evaluations e JOIN listings l ON l.id=e.listing_id WHERE l.active AND e.passes_filters) AS passing,
               (SELECT count(*) FROM listings WHERE vision_at > now() - interval '1 day') AS vision24,
+              (SELECT count(*) FROM evaluations e JOIN listings l ON l.id=e.listing_id
+                 WHERE l.active AND (e.details->>'gem')::boolean) AS gems,
+              (SELECT count(*) FROM alerted WHERE alerted_at > now() - interval '7 days') AS alerts7,
               (SELECT count(*) FROM listings WHERE kind='market' AND active) AS market""").fetchone()
         kv = {r["key"]: r["value"] for r in c.execute("SELECT key, value FROM kv").fetchall()}
 
@@ -116,12 +120,15 @@ def create_app() -> FastAPI:
         out.append(f"""<div class="stats">
 <div><span class="muted sm">Uszkodzone aktywne</span><b>{st['cand']}</b></div>
 <div><span class="muted sm">Spełnia kryteria</span><b>{st['passing']}</b></div>
+<div><span class="muted sm">💎 Perełki teraz</span><b>{st['gems']}</b></div>
+<div><span class="muted sm">Alerty / 7 dni</span><b>{st['alerts7']}</b></div>
 <div><span class="muted sm">Zdrowe (wycena)</span><b>{st['market']}</b></div>
 <div><span class="muted sm">Ocen zdjęć / 24 h</span><b>{st['vision24']}</b></div>
 <div><span class="muted sm">Rynek odświeżony</span><b class="sm">{ago('last_market')}</b></div>
 <div><span class="muted sm">Ostatni pakiet zdjęć</span><b class="sm">{ago('last_vision')}</b></div></div>
 <form method="post" action="/evaluate" class="row" style="margin-bottom:12px"><button class="sec">Przelicz ranking teraz</button>
-<span class="muted sm">robi to też pętla co cykl</span></form>""")
+<a href="/?gems={0 if gems else 1}">{'pokaż wszystkie' if gems else 'tylko perełki'}</a>
+<span class="muted sm">jedno auto = jeden wiersz, nawet gdy wisi w kilku ogłoszeniach</span></form>""")
         if not rows:
             out.append('<div class="card">Brak aut spełniających kryteria. Poluzuj ustawienia albo poczekaj na kolejny cykl.</div>')
         for i, r in enumerate(rows, 1):
@@ -134,7 +141,11 @@ def create_app() -> FastAPI:
             chips = "".join(f'<span class="w">{e(f)}</span>' for f in dmg.get("flags") or [])
             chips += "".join(f"<span>{e(x)}</span>" for x in d.get("reasons") or [] if x.startswith("+"))
             sev = FLAG_LABELS.get(dmg.get("severity"), dmg.get("severity") or "?")
-            out.append(f"""<div class="card"><div class="row"><span class="muted">#{i}</span>
+            gem = d.get("gem")
+            miss = d.get("gem_missing") or []
+            gem_line = ('<div class="sm score">💎 Perełka - spełnia wszystkie warunki</div>' if gem else
+                        f'<div class="sm muted">nie perełka: {e("; ".join(miss[:3]))}</div>' if miss else "")
+            out.append(f"""<div class="card"{' style="border-color:var(--ok);border-width:2px"' if gem else ''}><div class="row"><span class="muted">#{i}</span>
 <a href="{e(r['url'] or '#')}" target="_blank" rel="noopener"><b>{e(r['title'] or '')}</b></a>
 <span class="muted sm">{e(spec)}</span></div>
 <div class="row" style="margin-top:6px"><span class="price">{fmt_pln(r['price_pln'])}</span>
@@ -145,6 +156,7 @@ def create_app() -> FastAPI:
 <span class="score">score {fmt_pln(r['score'])}</span>{' <span class="muted sm">✓ alert</span>' if r.get('alerted_at') else ''}</div>
 {f'<div class="chips">{chips}</div>' if chips else ''}
 {f'<div class="sm" style="margin-top:6px">🔍 {e(dmg["notes"])}</div>' if dmg.get("notes") else ''}
+{gem_line}
 {'' if vis else f'<form method="post" action="/vision/{r["id"]}" style="margin-top:8px"><button class="sec">Oceń zdjęcia (~$0,01)</button></form>'}
 </div>""")
         return page("Ranking", "top", "".join(out))
@@ -228,8 +240,8 @@ def create_app() -> FastAPI:
                 for f in fields:
                     raw = data.get(f.name)
                     if f.kind in ("int", "float", "list") and raw is not None:
-                        shown.setdefault(f.section, {})[f.key] = raw if f.kind != "list" else \
-                            [x.strip() for x in str(raw).split(",") if x.strip()]
+                        _set(shown, f.section, f.key, raw if f.kind != "list" else
+                             [x.strip() for x in str(raw).split(",") if x.strip()])
             return render_form(shown, err.errors)
         save_config(config_path, changes)
         log.info("config saved via panel")

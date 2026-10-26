@@ -37,7 +37,23 @@ preferences:
   fuels: [diesel]
   makes: []
 
+# Perełka = wszystkie warunki naraz. Telegram dostaje tylko perełki; jak ich nie ma - cisza.
+alerts:
+  gems_only: true
+  max_per_cycle: 3
+
 scoring:
+  gem:
+    min_savings_pln: 15000     # realna oszczędność po naprawie i opłatach
+    min_ratio: 0.5             # cena >= 50% wartości zdrowego (taniej = zwykle wrak)
+    max_ratio: 0.85            # cena <= 85% (drożej = brak okazji)
+    min_comparables: 10        # pewna wycena
+    max_risk: 0.3
+    require_drivable: true     # opis: jeździ / odpala
+    require_registered: false
+    exclude_us_imports: true
+    light_repair_share: 0.08   # lekka szkoda z opisu: naprawa >= 8% wartości
+    light_gap_share: 0.2       # ... i >= 20% różnicy cena-rynek
   asking_to_transaction: 0.93     # ceny ofertowe zdrowych aut są zawyżone ~7%
   damage_history_discount: 0.0    # auto dla siebie -> 0; przy odsprzedaży ~0.12
   pref_bonus_pln: 3000            # premia za nadwozie/markę z preferencji (paliwo: połowa)

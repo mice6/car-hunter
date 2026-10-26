@@ -139,3 +139,34 @@ def test_vision_queue_skips_cars_that_cannot_fit_budget(conn):
     pipeline.evaluate_all(cfg, conn)
     ids = [q["id"] for q in pipeline.run_vision(cfg, conn, dry=True)["queue"]]
     assert ids == [fits]
+
+
+def test_gem_alerts_once_per_car(conn, monkeypatch):
+    for i in range(30):
+        db.upsert_listing(conn, _item(5000 + i, make="volvo", model="xc60", year=2018, mileage_km=120000,
+                                      power_hp=235, price=80000), "market", 4.25)
+    desc = "Szkoda parkingowa, lekko obtarty zderzak. Auto jeździ, zarejestrowane."
+    a, _ = db.upsert_listing(conn, _item(40, make="volvo", model="xc60", year=2018, mileage_km=120000, power_hp=235,
+                                         price=45000), "candidate", 4.25)
+    b, _ = db.upsert_listing(conn, _item(41, source="olx", make="volvo", model="xc60", year=2018, mileage_km=121000,
+                                         power_hp=235, price=44500), "candidate", 4.25)   # to samo auto na OLX
+    noise, _ = db.upsert_listing(conn, _item(42, make="volvo", model="xc60", year=2018, power_hp=235, price=30000),
+                                 "candidate", 4.25)  # tanie, bez opisu -> nie perełka
+    for lid in (a, b):
+        db.apply_detail(conn, lid, {"photos": ["x"] * 10, "description": desc, "active": True})
+    cfg = load_config("/nonexistent.yaml")
+    cfg.telegram_token, cfg.telegram_chat_id = "t", "c"
+    sent = []
+    monkeypatch.setattr(pipeline, "send_telegram", lambda tok, chat, text: sent.append(text) or True)
+    pipeline.evaluate_all(cfg, conn)
+    assert pipeline.alert(cfg, conn) == 1 and "PEREŁKA" in sent[0]
+    assert pipeline.alert(cfg, conn) == 0                     # drugi raz nic
+    rows = pipeline.top(conn, 10)
+    assert len([r for r in rows if r["id"] in (a, b)]) == 1   # ranking bez duplikatu
+    # auto wystawione ponownie pod nowym ID -> brak alertu
+    c2, _ = db.upsert_listing(conn, _item(43, make="volvo", model="xc60", year=2018, mileage_km=120200, power_hp=235,
+                                          price=44000), "candidate", 4.25)
+    db.apply_detail(conn, c2, {"photos": ["x"] * 10, "description": desc, "active": True})
+    pipeline.evaluate_all(cfg, conn)
+    assert pipeline.alert(cfg, conn) == 0 and len(sent) == 1
+    assert noise

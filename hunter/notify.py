@@ -20,11 +20,13 @@ def format_alert(row: dict) -> str:
         row.get("year"), f"{row['mileage_km']:,} km".replace(",", " ") if row.get("mileage_km") else None,
         f"{row['power_hp']} KM" if row.get("power_hp") else None, row.get("fuel"), row.get("body_type"),
     ] if x)
+    gem = d.get("gem")
     lines = [
-        f"🚗 <b>{html.escape(row.get('title') or '')}</b>",
+        f"{'💎 <b>PEREŁKA</b> · ' if gem else '🚗 '}<b>{html.escape(row.get('title') or '')}</b>",
         html.escape(spec),
         f"Cena: <b>{fmt_pln(row.get('price_pln'))}</b> · {html.escape(row.get('city') or '')}",
         f"Wycena zdrowego: {fmt_pln(row.get('market_value'))} ({row.get('comparables_n')} por.)",
+        f"Cena to {float(d.get('price_ratio') or 0):.0%} wartości zdrowego",
         f"Naprawa ({'ze zdjęć' if dmg.get('source') == 'vision' else 'szac. z opisu'}, {dmg.get('severity', '?')}): {fmt_pln(row.get('repair_estimate'))} · opłaty {fmt_pln(row.get('fees'))}",
         f"Oszczędność: <b>{fmt_pln(row.get('savings'))}</b> · ryzyko {float(row.get('risk') or 0):.0%} · score {fmt_pln(row.get('score'))}",
     ]

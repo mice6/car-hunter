@@ -89,3 +89,11 @@ CREATE TABLE IF NOT EXISTS olx_makes (
     category_id INT PRIMARY KEY,
     slug        TEXT NOT NULL
 );
+
+-- odciski aut, o których już był alert (to samo auto wystawione ponownie nie da drugiego alertu)
+CREATE TABLE IF NOT EXISTS alerted (
+    fp          TEXT PRIMARY KEY,
+    listing_id  BIGINT,
+    price_pln   NUMERIC(12,2),
+    alerted_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

@@ -16,6 +16,9 @@ BASE_FORM = {
     "vision.max_per_day": "150", "vision.auto": "on", "scoring.implied_damage_share": "0.5",
     "scoring.vision_min_gap_share": "0.25", "scoring.asking_to_transaction": "0.93",
     "scoring.valuation_year_window": "2", "schedule.candidates_every_min": "30",
+    "alerts.gems_only": "on", "alerts.max_per_cycle": "3", "scoring.gem.min_savings_pln": "15000",
+    "scoring.gem.min_ratio": "0.5", "scoring.gem.max_ratio": "0.85", "scoring.gem.min_comparables": "10",
+    "scoring.gem.max_risk": "0.3", "scoring.gem.require_drivable": "on",
 }
 
 
@@ -27,6 +30,7 @@ def test_parse_form_types():
     assert c["exclude_airbags"] is True and c["exclude_structural"] is False   # brak checkboxa = False
     assert out["vision"]["auto"] is True and out["vision"]["require_for_alert"] is False
     assert {f.section for f in ALL_FIELDS} == set(out)
+    assert out["scoring"]["gem"]["min_savings_pln"] == 15000 and out["alerts"]["gems_only"] is True
 
 
 def test_parse_form_errors():
@@ -41,12 +45,14 @@ def test_parse_form_errors():
 
 def test_save_config_merges_and_backs_up(tmp_path):
     p = tmp_path / "config.yaml"
-    p.write_text("criteria:\n  min_year: 2010\n  custom_key: 7\nvision:\n  model: qwen/x\n", encoding="utf-8")
+    p.write_text("criteria:\n  min_year: 2010\n  custom_key: 7\nvision:\n  model: qwen/x\n"
+                 "scoring:\n  gem:\n    light_repair_share: 0.1\n", encoding="utf-8")
     save_config(p, parse_form(BASE_FORM))
     data = yaml.safe_load(p.read_text(encoding="utf-8"))
     assert data["criteria"]["min_year"] == 2017 and data["criteria"]["custom_key"] == 7
     assert data["vision"]["model"] == "qwen/x" and data["vision"]["auto"] is True
     assert len(list((tmp_path / "config-backups").glob("config-*.yaml"))) == 1
+    assert data["scoring"]["gem"]["light_repair_share"] == 0.1 and data["scoring"]["gem"]["min_ratio"] == 0.5
 
 
 DSN = os.environ.get("HUNTER_TEST_DB")

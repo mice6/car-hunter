@@ -324,24 +324,55 @@ LIMIT %s
 """
 
 
-def alert(cfg: Config, conn, max_alerts: int = 10) -> int:
+def alert(cfg: Config, conn, max_alerts: int = 3) -> int:
+    """Telegram tylko dla perełek (domyślnie). Każde auto (odcisk) maksymalnie raz - nawet po ponownym wystawieniu."""
     if not (cfg.telegram_token and cfg.telegram_chat_id):
         log.info("telegram not configured, skipping alerts")
         return 0
-    extra = "AND e.alerted_at IS NULL AND e.score >= %s"
+    al = cfg.data.get("alerts") or {}
+    extra = "AND e.alerted_at IS NULL"
+    params: list = []
+    if al.get("gems_only", True):
+        extra += " AND (e.details->>'gem')::boolean"
+    else:
+        extra += " AND e.score >= %s"
+        params.append(cfg.scoring["min_score_alert_pln"])
     if cfg.vision_auto and cfg.vision.get("require_for_alert", True):
         extra += " AND e.details->'damage'->>'source' = 'vision'"
-    rows = conn.execute(
-        TOP_SQL.format(extra=extra),
-        (cfg.scoring["min_score_alert_pln"], max_alerts)).fetchall()
+    rows = conn.execute(TOP_SQL.format(extra=extra), (*params, 50)).fetchall()
     sent = 0
     for r in rows:
+        fp = (r.get("details") or {}).get("fp") or f"id:{r['id']}"
+        if conn.execute("SELECT 1 FROM alerted WHERE fp = %s", (fp,)).fetchone():
+            conn.execute("UPDATE evaluations SET alerted_at = now() WHERE listing_id=%s", (r["id"],))  # duplikat
+            continue
+        if sent >= al.get("max_per_cycle", max_alerts):
+            break
         if send_telegram(cfg.telegram_token, cfg.telegram_chat_id, format_alert(r)):
             conn.execute("UPDATE evaluations SET alerted_at = now() WHERE listing_id=%s", (r["id"],))
+            conn.execute("INSERT INTO alerted (fp, listing_id, price_pln) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                         (fp, r["id"], r["price_pln"]))
             sent += 1
     log.info("alerts sent: %d", sent)
     return sent
 
 
-def top(conn, n: int = 20) -> list[dict]:
-    return conn.execute(TOP_SQL.format(extra=""), (n,)).fetchall()
+def dedupe(rows: list[dict]) -> list[dict]:
+    """Jedno auto = jeden wiersz (najlepszy wynik), nawet gdy wisi w kilku ogłoszeniach."""
+    seen, out = set(), []
+    for r in rows:
+        fp = (r.get("details") or {}).get("fp") or f"id:{r['id']}"
+        if fp in seen:
+            continue
+        seen.add(fp)
+        out.append(r)
+    return out
+
+
+def top(conn, n: int = 20, gems_only: bool = False) -> list[dict]:
+    extra = "AND (e.details->>'gem')::boolean" if gems_only else ""
+    rows = conn.execute(TOP_SQL.format(extra=extra), (n * 3,)).fetchall()
+    rows = dedupe(rows)
+    # perełki zawsze na górze
+    rows.sort(key=lambda r: (not (r.get("details") or {}).get("gem"), -(float(r["score"] or 0))))
+    return rows[:n]

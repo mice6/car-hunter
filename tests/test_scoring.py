@@ -50,9 +50,11 @@ def test_evaluate_pass_and_budget():
                "body_type": "combi", "title": "Skoda Superb", "description": "lekko obtarty zderzak"}
     ev = evaluate(listing, Valuation(60000, "test", 20), CFG.criteria, CFG.scoring)
     assert ev.passes_filters, ev.details
-    # bez zdjęć połowa różnicy cena-rynek liczona jako szkoda: 0.5 * 30 000
-    assert ev.repair_estimate == 15000 and ev.details["repair_basis"] == "implied"
-    assert ev.savings > 5000 and ev.score > ev.savings * 0.8
+    # opis "lekko obtarty" i cena 50% rynku -> kosztorys lekkiej szkody: max(8% * 60k, 20% * 30k) = 6000
+    assert ev.repair_estimate == 6000 and ev.details["repair_basis"] == "light_text"
+    heavy = evaluate(dict(listing, description="uszkodzony przód"), Valuation(60000, "test", 20), CFG.criteria,
+                     CFG.scoring)
+    assert heavy.repair_estimate == 15000 and heavy.details["repair_basis"] == "implied"   # 0.5 * 30 000
 
     expensive = dict(listing, price_pln=50000)
     ev2 = evaluate(expensive, Valuation(80000, "test", 20), CFG.criteria, CFG.scoring)
@@ -141,3 +143,42 @@ def test_damage_limits_after_vision():
     assert evaluate(base, Valuation(80000, "t", 30), loose, CFG.scoring).details["criteria_ok"]
     cheap = evaluate(dict(base, price_pln=25000, vision=None), Valuation(80000, "t", 30), CFG.criteria, CFG.scoring)
     assert any("wrak" in x for x in cheap.details["reasons"])   # 31% < 35%
+
+
+def _gem_base(**kw):
+    d = {"price_pln": 45000, "power_hp": 250, "gearbox": "automatic", "make": "volvo", "model": "xc60", "year": 2018,
+         "mileage_km": 120000, "fuel": "diesel", "title": "Volvo XC60",
+         "description": "Szkoda parkingowa, lekko obtarty zderzak tylny i drzwi. Auto jeździ, sprawne, zarejestrowane."}
+    d.update(kw)
+    return d
+
+
+def test_gem_light_damage_listing():
+    ev = evaluate(_gem_base(), Valuation(80000, "regression", 30), CFG.criteria, CFG.scoring)
+    assert ev.details["repair_basis"] == "light_text"
+    assert ev.details["gem"], ev.details["gem_missing"]
+    assert ev.savings >= 15000
+
+
+def test_not_gem_cases():
+    v = Valuation(80000, "regression", 30)
+    cases = {
+        "nie odpala": _gem_base(description="Lekko obtarty, nie odpala, do holowania"),
+        "poduszki": _gem_base(description="Lekko uszkodzony przód, wystrzelone poduszki, jeździ"),
+        "mało porównań": _gem_base(),
+        "drogo": _gem_base(price_pln=50000),
+        "usa": _gem_base(description="Lekko obtarty, jeździ. Jedzie z USA, Copart"),
+    }
+    for name, lst in cases.items():
+        val = Valuation(80000, "t", 5) if name == "mało porównań" else v
+        ev = evaluate(lst, val, CFG.criteria, CFG.scoring)
+        assert not ev.details["gem"], (name, ev.details)
+
+
+def test_fingerprint_same_car_relisted():
+    from hunter.scoring import fingerprint
+    a = _gem_base(mileage_km=120400)
+    b = _gem_base(mileage_km=119800, price_pln=43000, description="inne ogłoszenie")
+    assert fingerprint(a) == fingerprint(b)
+    assert fingerprint(_gem_base(vin="YV1UZA8VCJ1234567")) == "vin:YV1UZA8VCJ1234567"
+    assert fingerprint(a) != fingerprint(_gem_base(year=2019))
