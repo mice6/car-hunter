@@ -93,6 +93,7 @@ def test_vision_prefilter_and_save(conn, monkeypatch):
     cfg = load_config("/nonexistent.yaml")
     cfg.data["criteria"]["min_price_ratio"] = 0.2   # dane testowe mają duże rabaty
     cfg.runpod_api_key, cfg.runpod_endpoint_id = "k", "e"
+    cfg.data["vision"]["mode"] = "all"
     pipeline.evaluate_all(cfg, conn)
 
     seen = []
@@ -136,6 +137,7 @@ def test_vision_queue_skips_cars_that_cannot_fit_budget(conn):
         db.apply_detail(conn, lid, {"photos": ["x"] * 8, "active": True})
     cfg = load_config("/nonexistent.yaml")
     cfg.data["criteria"]["min_price_ratio"] = 0.2   # dane testowe mają duże rabaty
+    cfg.data["vision"]["mode"] = "all"
     pipeline.evaluate_all(cfg, conn)
     ids = [q["id"] for q in pipeline.run_vision(cfg, conn, dry=True)["queue"]]
     assert ids == [fits]
@@ -189,3 +191,42 @@ def test_cepik_flows_into_evaluation(conn):
     r = [x for x in pipeline.top(conn, 5) if x["id"] == lid][0]
     assert r["cepik"]["owners"] == 2 and r["details"]["signals"]["cepik"] is True
     assert r["details"]["signals"]["registered"] is True
+
+
+def test_vision_gems_mode_and_confirmed_alert(conn, monkeypatch):
+    from hunter import vision as vmod
+    for i in range(30):
+        db.upsert_listing(conn, _item(7000 + i, make="volvo", model="xc60", year=2018, mileage_km=120000,
+                                      power_hp=235, price=80000), "market", 4.25)
+        db.upsert_listing(conn, _item(7100 + i, make="kia", model="sportage", year=2018, mileage_km=120000,
+                                      power_hp=185, price=70000), "market", 4.25)
+    desc = "Szkoda parkingowa, lekko obtarty zderzak. Auto jeździ, zarejestrowane."
+    gem, _ = db.upsert_listing(conn, _item(60, make="volvo", model="xc60", year=2018, mileage_km=120000,
+                                           power_hp=235, price=42000), "candidate", 4.25)
+    other, _ = db.upsert_listing(conn, _item(61, make="kia", model="sportage", year=2018, mileage_km=120000,
+                                             power_hp=185, price=30000), "candidate", 4.25)
+    for lid, d in ((gem, desc), (other, "Uszkodzony przód")):
+        db.apply_detail(conn, lid, {"photos": ["x"] * 10, "description": d, "active": True})
+    cfg = load_config("/nonexistent.yaml")
+    cfg.runpod_api_key, cfg.runpod_endpoint_id = "k", "e"
+    cfg.telegram_token, cfg.telegram_chat_id = "t", "c"
+    cfg.data["vision"].update({"auto": True, "mode": "gems", "top_n": 0, "require_for_alert": True})
+    pipeline.evaluate_all(cfg, conn)
+    sent = []
+    monkeypatch.setattr(pipeline, "send_telegram", lambda tok, chat, text: sent.append(text) or True)
+    assert pipeline.alert(cfg, conn) == 0          # kandydat bez potwierdzenia zdjęciami -> brak alertu
+    seen = []
+
+    def fake_analyze(vcfg, lst):
+        seen.append(lst["id"])
+        return {"parts": [{"part": "rear_bumper", "action": "repair"}], "damage_zones": [{"zone": "rear", "severity": "light"}],
+                "photos_cover": {"front": True, "rear": True, "left": True, "right": True}, "overall_severity": "light",
+                "airbags_deployed": "no", "structural_damage": "no", "drivable": "yes", "confidence": 0.9,
+                "description_consistent": "yes", "notes_pl": "Rysy na zderzaku.", "mechanical_issues": []}
+
+    monkeypatch.setattr(vmod, "analyze", fake_analyze)
+    pipeline.run_vision(cfg, conn)
+    assert seen == [gem]                           # na RunPod poszedł tylko kandydat na perełkę
+    pipeline.evaluate_all(cfg, conn)
+    assert pipeline.alert(cfg, conn) == 1 and "PEREŁKA" in sent[0]
+    assert other

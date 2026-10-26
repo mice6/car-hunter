@@ -18,7 +18,7 @@ BASE_FORM = {
     "scoring.valuation_year_window": "2", "schedule.candidates_every_min": "30",
     "alerts.gems_only": "on", "alerts.max_per_cycle": "3", "scoring.gem.min_savings_pln": "15000",
     "scoring.gem.min_ratio": "0.5", "scoring.gem.max_ratio": "0.85", "scoring.gem.min_comparables": "10",
-    "scoring.gem.max_risk": "0.3", "scoring.gem.require_drivable": "on",
+    "scoring.gem.max_risk": "0.3", "scoring.gem.require_drivable": "on", "vision.mode": "gems", "vision.top_n": "5",
 }
 
 

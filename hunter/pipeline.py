@@ -211,6 +211,17 @@ def evaluate_all(cfg: Config, conn) -> dict:
 
 # ------------------------------------------------------------------ ocena zdjęć (RunPod)
 
+# tryb "gems": tylko kandydaci na perełkę + dopełnienie do top N rankingu
+GEMS_VISION_SQL = """
+SELECT l.*, e.market_value AS ev_market, e.fees AS ev_fees, e.details AS ev_details
+FROM listings l JOIN evaluations e ON e.listing_id = l.id
+WHERE l.kind = 'candidate' AND l.active AND e.passes_filters
+  AND (l.vision IS NULL OR (l.vision ? '_error' AND l.vision_at < now() - interval '1 day'))
+  AND (jsonb_array_length(l.photos) >= %(min_photos)s OR (l.source = 'otomoto' AND l.enriched_at IS NULL))
+ORDER BY (e.details->>'gem')::boolean DESC NULLS LAST, e.score DESC NULLS LAST
+LIMIT 200
+"""
+
 VISION_SQL = """
 SELECT l.*, e.market_value AS ev_market, e.fees AS ev_fees
 FROM listings l JOIN evaluations e ON e.listing_id = l.id
@@ -289,11 +300,25 @@ def run_vision(cfg: Config, conn, limit: int | None = None, listing_id: int | No
         if n == 0:
             log.info("vision: daily limit reached (%d)", used)
             return {"daily_limit": True}
-        rows = conn.execute(VISION_SQL, {
-            "min_photos": v["min_photos"],
-            "min_opt": v["min_optimistic_savings_pln"], "budget": cfg.criteria["budget_total_pln"], "limit": n,
-            "gap_share": cfg.scoring.get("vision_min_gap_share", 0.25),
-        }).fetchall()
+        if v.get("mode", "gems") == "gems":
+            cand = dedupe(conn.execute(GEMS_VISION_SQL, {"min_photos": v["min_photos"]}).fetchall(),
+                          key="ev_details")
+            gems = [r for r in cand if (r.get("ev_details") or {}).get("gem")]
+            # już ocenione auta z top N nie liczą się drugi raz
+            assessed_top = conn.execute(
+                """SELECT count(*) AS n FROM (SELECT l.vision FROM evaluations e JOIN listings l ON l.id=e.listing_id
+                   WHERE l.active AND e.passes_filters ORDER BY e.score DESC LIMIT %s) t WHERE t.vision IS NOT NULL""",
+                (v.get("top_n", 5),)).fetchone()["n"]
+            fill = max(0, v.get("top_n", 5) - assessed_top)
+            others = [r for r in cand if r not in gems][:fill]
+            rows = (gems + others)[:n]
+            log.info("vision(gems): %d gem candidates, %d from top %d", len(gems), len(others), v.get("top_n", 5))
+        else:
+            rows = conn.execute(VISION_SQL, {
+                "min_photos": v["min_photos"],
+                "min_opt": v["min_optimistic_savings_pln"], "budget": cfg.criteria["budget_total_pln"], "limit": n,
+                "gap_share": cfg.scoring.get("vision_min_gap_share", 0.25),
+            }).fetchall()
     if not dry and listing_id is None:
         rows = _ensure_details(cfg, conn, rows, v["min_photos"])
     if dry:
@@ -358,11 +383,11 @@ def alert(cfg: Config, conn, max_alerts: int = 3) -> int:
     return sent
 
 
-def dedupe(rows: list[dict]) -> list[dict]:
+def dedupe(rows: list[dict], key: str = "details") -> list[dict]:
     """Jedno auto = jeden wiersz (najlepszy wynik), nawet gdy wisi w kilku ogłoszeniach."""
     seen, out = set(), []
     for r in rows:
-        fp = (r.get("details") or {}).get("fp") or f"id:{r['id']}"
+        fp = (r.get(key) or {}).get("fp") or f"id:{r['id']}"
         if fp in seen:
             continue
         seen.add(fp)

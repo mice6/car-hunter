@@ -143,7 +143,8 @@ def create_app() -> FastAPI:
             sev = FLAG_LABELS.get(dmg.get("severity"), dmg.get("severity") or "?")
             gem = d.get("gem")
             miss = d.get("gem_missing") or []
-            gem_line = ('<div class="sm score">💎 Perełka - spełnia wszystkie warunki</div>' if gem else
+            gem_line = (('<div class="sm score">💎 Perełka - potwierdzona zdjęciami</div>' if vis else
+                         '<div class="sm warn">💎 Kandydat na perełkę - czeka na potwierdzenie zdjęciami</div>') if gem else
                         f'<div class="sm muted">nie perełka: {e("; ".join(miss[:3]))}</div>' if miss else "")
             out.append(f"""<div class="card"{' style="border-color:var(--ok);border-width:2px"' if gem else ''}><div class="row"><span class="muted">#{i}</span>
 <a href="{e(r['url'] or '#')}" target="_blank" rel="noopener"><b>{e(r['title'] or '')}</b></a>

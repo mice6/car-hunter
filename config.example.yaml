@@ -82,6 +82,8 @@ scraper:
 
 vision:                          # ocena zdjęć na RunPod (wymaga RUNPOD_API_KEY i RUNPOD_ENDPOINT_ID w .env)
   auto: false                    # false = tylko ręcznie: hunter vision --id N / --limit N
+  mode: gems                     # gems = tylko kandydaci na perełkę + top_n rankingu; all = cała kolejka
+  top_n: 5                       # w trybie gems: dopilnuj, żeby top N rankingu było ocenione ze zdjęć
   every_hours: 3                 # w trybie auto: jeden pakiet co N godzin (każdy pakiet = 1 zimny start)
   model: qwen/qwen3-vl-30b-a3b-instruct-fp8   # dokładnie jak w GET /openai/v1/models endpointu
   max_images: 12
@@ -90,8 +92,8 @@ vision:                          # ocena zdjęć na RunPod (wymaga RUNPOD_API_KE
   min_photos: 4
   concurrency: 4                 # równoległe zapytania (vLLM batchuje je na jednym GPU)
   timeout_s: 600                 # zimny start endpointu potrafi trwać 1-3 min
-  max_per_run: 25                # aut w jednym pakiecie
-  max_per_day: 150               # twardy limit kosztów (~$1-1.5/dzień przy 30B na 48 GB)
+  max_per_run: 10                # aut w jednym pakiecie
+  max_per_day: 15                # twardy limit kosztów (~$0.15-0.40/dzień)
   min_optimistic_savings_pln: 4000   # wysyłaj tylko auta z szansą na oszczędność
   require_for_alert: true        # alertuj tylko auta ocenione ze zdjęć
 

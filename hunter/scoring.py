@@ -365,7 +365,13 @@ def gem_check(listing: dict, valuation: "Valuation", ratio: float, savings: floa
     if vision:
         if dmg.severity == "severe" or vision.get("airbags_deployed") in ("yes", "likely") \
                 or vision.get("structural_damage") in ("yes", "likely"):
-            miss.append("szkoda ze zdjęć za duża")
+            miss.append("zdjęcia: szkoda za duża")
+        if vision.get("flood_signs") in ("yes", "likely") or vision.get("fire_signs") in ("yes", "likely"):
+            miss.append("zdjęcia: zalanie/pożar")
+        if vision.get("description_consistent") == "no":
+            miss.append("zdjęcia gorsze niż opis")
+        if sig["severe"] or sig["airbags"]:
+            miss.append("opis wskazuje poważną szkodę")
     else:
         if not sig["light"]:
             miss.append("opis nie mówi o lekkiej szkodzie")
@@ -374,7 +380,8 @@ def gem_check(listing: dict, valuation: "Valuation", ratio: float, savings: floa
         if not sig["has_description"]:
             miss.append("brak opisu")
     if g.get("require_drivable", True):
-        drivable = (vision or {}).get("drivable") in ("yes", "likely") if vision else sig["drivable"]
+        v_drv = (vision or {}).get("drivable")
+        drivable = (sig["drivable"] or v_drv in ("yes", "likely")) and v_drv != "no"
         if not drivable or sig["not_drivable"]:
             miss.append("brak potwierdzenia, że jeździ")
     if g.get("require_registered", False) and not sig["registered"]:

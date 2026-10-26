@@ -91,7 +91,10 @@ GROUPS: list[tuple[str, str, list[Field]]] = [
     ("alerty", "Alerty i ocena zdjęć", [
         Field("scoring", "min_score_alert_pln", "int", "Alert od score [zł] (gdy nie tylko perełki)", min=0),
         Field("vision", "auto", "bool", "Automatyczna ocena zdjęć (RunPod)"),
-        Field("vision", "require_for_alert", "bool", "Alert tylko po ocenie zdjęć"),
+        Field("vision", "mode", "choice", "Co wysyłać na RunPod", options=["gems", "all"],
+              help="gems = tylko kandydaci na perełkę + top N; all = cała kolejka (drożej)"),
+        Field("vision", "top_n", "int", "Top N rankingu zawsze ocenione", min=0, max=50),
+        Field("vision", "require_for_alert", "bool", "Alert tylko po potwierdzeniu zdjęciami"),
         Field("vision", "every_hours", "float", "Pakiet co [h]", min=0.5, max=48),
         Field("vision", "max_per_run", "int", "Aut w pakiecie", min=1, max=200),
         Field("vision", "max_per_day", "int", "Aut dziennie max", min=0, max=2000, help="twardy limit kosztów"),
