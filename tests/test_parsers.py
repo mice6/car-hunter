@@ -121,3 +121,22 @@ def test_otomoto_pagination_and_incremental_stop():
     stop = lambda items: all(i["source_id"] in known for i in items)  # noqa: E731
     list(otomoto.search(http2, {}, 10, stop_when_known=stop))
     assert http2.calls == [1]
+
+
+def test_otomoto_cepik_parsed():
+    pd = {k: {"label": k, "values": [{"value": v, "label": v}]} for k, v in {"damaged": "1"}.items()}
+    cepik = {"verifiedCar": True, "numberOfOwners": {"value": "2"}, "importedCar": {"value": True},
+             "insuranceValidity": {"value": "13.08.2027"}, "inspectionValidity": {"value": "26.03.2027"},
+             "timeline": [
+                 {"type": "periodic_technical_inspection", "date": "26.03.2026", "details": {"result": "positive"}},
+                 {"type": "periodic_technical_inspection", "date": "20.03.2026", "details": {"result": "negative"}},
+                 {"type": "first_registration_in_poland", "date": "05.04.2019", "details": {}},
+                 {"type": "first_registration_abroad", "date": "01.02.2017", "details": {}}]}
+    html = _page({"advert": {"parametersDict": pd, "images": {"photos": []}, "description": "", "equipment": []},
+                  "cepikWidget": {"status": 0, "props": {"advert": {"cepik": cepik}}}})
+    c = otomoto.parse_detail(html)["cepik"]
+    assert c["owners"] == 2 and c["inspections"] == 2 and c["failed_inspections"] == 1
+    assert c["first_registration_abroad"] == "01.02.2017" and c["insurance_valid_until"] == "13.08.2027"
+    none = _page({"advert": {"parametersDict": pd, "images": {"photos": []}, "description": "", "equipment": []},
+                  "cepikWidget": {"status": 1}})
+    assert otomoto.parse_detail(none)["cepik"] is None

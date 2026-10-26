@@ -15,7 +15,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from . import db, pipeline
 from .config import load_config
-from .notify import fmt_pln
+from .notify import cepik_summary, fmt_pln
 from .settings import GROUPS, FormError, _set, get_value, parse_form, save_config
 
 log = logging.getLogger(__name__)
@@ -156,6 +156,8 @@ def create_app() -> FastAPI:
 <span class="score">score {fmt_pln(r['score'])}</span>{' <span class="muted sm">✓ alert</span>' if r.get('alerted_at') else ''}</div>
 {f'<div class="chips">{chips}</div>' if chips else ''}
 {f'<div class="sm" style="margin-top:6px">🔍 {e(dmg["notes"])}</div>' if dmg.get("notes") else ''}
+{f'<div class="sm" style="margin-top:4px">📋 CEPiK: {e(cepik_summary(r["cepik"]))}</div>' if r.get("cepik") else ''}
+{f'<div class="sm muted">VIN {e(r["vin"])} · <a target="_blank" rel="noopener" href="https://www.google.com/search?q={quote(chr(34) + r["vin"] + chr(34))}">historia aukcji</a> · <a target="_blank" rel="noopener" href="https://historiapojazdu.gov.pl/">historiapojazdu.gov.pl</a></div>' if r.get("vin") else ''}
 {gem_line}
 {'' if vis else f'<form method="post" action="/vision/{r["id"]}" style="margin-top:8px"><button class="sec">Oceń zdjęcia (~$0,01)</button></form>'}
 </div>""")

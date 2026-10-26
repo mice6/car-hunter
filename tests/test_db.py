@@ -170,3 +170,22 @@ def test_gem_alerts_once_per_car(conn, monkeypatch):
     pipeline.evaluate_all(cfg, conn)
     assert pipeline.alert(cfg, conn) == 0 and len(sent) == 1
     assert noise
+
+
+def test_cepik_flows_into_evaluation(conn):
+    for i in range(12):
+        db.upsert_listing(conn, _item(6000 + i, make="mazda", model="cx-5", year=2019, power_hp=194,
+                                      price=90000), "market", 4.25)
+    lid, _ = db.upsert_listing(conn, _item(50, make="mazda", model="cx-5", year=2019, power_hp=194, price=55000),
+                               "candidate", 4.25)
+    db.apply_detail(conn, lid, {"photos": ["x"] * 10, "active": True,
+                                "description": "Lekko obtarty zderzak, auto jeździ, stan bardzo dobry.",
+                                "cepik": {"verified": True, "owners": 2, "inspections": 3, "failed_inspections": 0,
+                                          "insurance_valid_until": "01.01.2027"}})
+    cfg = load_config("/nonexistent.yaml")
+    cfg.data["criteria"]["budget_total_pln"] = 80000
+    cfg.data["criteria"]["max_purchase_pln"] = 70000
+    pipeline.evaluate_all(cfg, conn)
+    r = [x for x in pipeline.top(conn, 5) if x["id"] == lid][0]
+    assert r["cepik"]["owners"] == 2 and r["details"]["signals"]["cepik"] is True
+    assert r["details"]["signals"]["registered"] is True

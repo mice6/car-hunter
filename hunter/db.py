@@ -93,6 +93,7 @@ def apply_detail(conn, listing_id: int, d: dict) -> None:
              damaged = COALESCE(%(damaged)s, damaged),
              imported = COALESCE(%(imported)s, imported),
              has_registration = COALESCE(%(has_registration)s, has_registration),
+             -- CEPiK z ważnym OC = auto zarejestrowane w PL
              rhd = COALESCE(%(rhd)s, rhd),
              description = COALESCE(NULLIF(%(description)s, ''), description),
              photos = CASE WHEN jsonb_array_length(%(photos)s::jsonb) > 0 THEN %(photos)s::jsonb ELSE photos END,
@@ -111,7 +112,7 @@ def apply_detail(conn, listing_id: int, d: dict) -> None:
             "rhd": d.get("rhd"),
             "description": d.get("description") or "",
             "photos": json.dumps(d.get("photos") or []),
-            "extra": json.dumps({"equipment": d.get("equipment") or []}),
+            "extra": json.dumps({"equipment": d.get("equipment") or [], "cepik": d.get("cepik")}),
             "active": d.get("active", True),
         },
     )

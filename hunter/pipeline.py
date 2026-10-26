@@ -314,7 +314,8 @@ def run_vision(cfg: Config, conn, limit: int | None = None, listing_id: int | No
 
 
 TOP_SQL = """
-SELECT l.id, l.source, l.title, l.url, l.year, l.mileage_km, l.power_hp, l.fuel, l.body_type, l.city,
+SELECT l.id, l.source, l.title, l.url, l.year, l.mileage_km, l.power_hp, l.fuel, l.body_type, l.city, l.vin,
+       l.raw->'cepik' AS cepik,
        l.price_pln, e.market_value, e.comparables_n, e.repair_estimate, e.fees, e.total_cost, e.savings,
        e.risk, e.score, e.details, e.alerted_at
 FROM evaluations e JOIN listings l ON l.id = e.listing_id

@@ -166,6 +166,15 @@ def _context_risk(listing: dict, text: str, with_vision: bool) -> tuple[float, l
     if listing.get("has_registration") is False:
         risk += 0.10
         flags.append("brak rejestracji w PL")
+    cep = cepik_of(listing)
+    if cep:
+        risk -= 0.05   # zweryfikowana historia w CEPiK
+        if cep.get("failed_inspections"):
+            risk += 0.10
+            flags.append(f"CEPiK: {cep['failed_inspections']} negatywny przegląd")
+        if (cep.get("owners") or 0) >= 4:
+            risk += 0.05
+            flags.append(f"CEPiK: {cep['owners']} właścicieli")
     photos = listing.get("photos") or []
     if listing.get("enriched_at") and len(photos) < 6:
         risk += 0.10
@@ -303,8 +312,20 @@ def text_of(listing: dict) -> str:
     return " ".join(filter(None, [listing.get("title"), listing.get("short_description"), listing.get("description")]))
 
 
+def cepik_of(listing: dict) -> dict | None:
+    raw = listing.get("raw") or {}
+    if isinstance(raw, str):
+        try:
+            import json as _json
+            raw = _json.loads(raw)
+        except ValueError:
+            raw = {}
+    return raw.get("cepik") or None
+
+
 def text_signals(listing: dict) -> dict:
     t = text_of(listing)
+    cep = cepik_of(listing)
     not_drivable = bool(_hits(t, NOT_DRIVABLE))
     t_wo_neg = re.sub(r"nie (?:odpala|jeźdz|jezdz|jeździ|jezdzi|uruchamia|porusza)\w*", " ", t, flags=re.I)
     return {
@@ -313,7 +334,9 @@ def text_signals(listing: dict) -> dict:
         "airbags": bool(_hits(t, AIRBAG_WORDS)),
         "drivable": (not not_drivable) and bool(_hits(t_wo_neg, DRIVABLE)),
         "not_drivable": not_drivable,
-        "registered": listing.get("has_registration") is True or bool(_hits(t, REGISTERED)),
+        "registered": listing.get("has_registration") is True or bool(_hits(t, REGISTERED)) or bool(cep),
+        "cepik": bool(cep),
+        "cepik_failed_inspections": (cep or {}).get("failed_inspections") or 0,
         "us_import": bool(_hits(t, US_IMPORT)),
         "has_description": len((listing.get("description") or "").strip()) >= 40,
     }
@@ -358,6 +381,8 @@ def gem_check(listing: dict, valuation: "Valuation", ratio: float, savings: floa
         miss.append("brak potwierdzenia rejestracji")
     if g.get("exclude_us_imports", True) and sig["us_import"]:
         miss.append("import z USA")
+    if sig.get("cepik_failed_inspections"):
+        miss.append("CEPiK: negatywny przegląd")
     if savings < g.get("min_savings_pln", 15000):
         miss.append(f"oszczędność < {g.get('min_savings_pln', 15000):,.0f} zł".replace(",", " "))
     if risk > g.get("max_risk", 0.3):

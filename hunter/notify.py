@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import logging
+from urllib.parse import quote_plus
 
 from curl_cffi import requests as creq
 
@@ -34,8 +35,31 @@ def format_alert(row: dict) -> str:
         lines.append("⚠️ " + html.escape("; ".join(flags)))
     if dmg.get("notes"):
         lines.append("🔍 " + html.escape(dmg["notes"]))
+    cep = row.get("cepik")
+    if cep:
+        lines.append("📋 CEPiK: " + html.escape(cepik_summary(cep)))
+    if row.get("vin"):
+        q = quote_plus(f'"{row["vin"]}"')
+        lines.append(f'VIN {html.escape(row["vin"])}: <a href="https://www.google.com/search?q={q}">historia aukcji/zdjęcia</a>'
+                     ' · <a href="https://historiapojazdu.gov.pl/">historiapojazdu.gov.pl</a>')
     lines.append(html.escape(row.get("url") or ""))
     return "\n".join(lines)
+
+
+def cepik_summary(c: dict) -> str:
+    parts = []
+    if c.get("owners") is not None:
+        parts.append(f"{c['owners']} właść.")
+    if c.get("inspections"):
+        bad = c.get("failed_inspections") or 0
+        parts.append(f"przeglądy {c['inspections']}" + (f" ({bad} negat.)" if bad else " ok"))
+    if c.get("insurance_valid_until"):
+        parts.append(f"OC do {c['insurance_valid_until']}")
+    if c.get("first_registration_abroad"):
+        parts.append(f"1. rej. za granicą {c['first_registration_abroad']}")
+    if c.get("first_registration_pl"):
+        parts.append(f"w PL od {c['first_registration_pl']}")
+    return " · ".join(parts) or "zweryfikowany"
 
 
 def send_telegram(token: str, chat_id: str, text: str) -> bool:

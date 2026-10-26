@@ -92,6 +92,32 @@ def _pd(pd: dict, key: str):
     return vals[0].get("value") if vals else None
 
 
+def parse_cepik(pp: dict) -> dict | None:
+    """Dane CEPiK z widgetu OtoMoto (tylko ogłoszenia z podanym nr rejestracyjnym)."""
+    c = (((pp.get("cepikWidget") or {}).get("props") or {}).get("advert") or {}).get("cepik")
+    if not c or not c.get("verifiedCar"):
+        return None
+    val = lambda k: (c.get(k) or {}).get("value")  # noqa: E731
+    tl = c.get("timeline") or []
+    inspections = [t for t in tl if t.get("type") == "periodic_technical_inspection"]
+    failed = [t for t in inspections if ((t.get("details") or {}).get("result") or "").lower() not in ("positive", "")]
+    abroad = next((t.get("date") for t in tl if t.get("type") == "first_registration_abroad"), None)
+    in_pl = next((t.get("date") for t in tl if t.get("type") == "first_registration_in_poland"), None)
+    owners = val("numberOfOwners")
+    return {
+        "verified": True,
+        "owners": int(owners) if str(owners or "").isdigit() else None,
+        "imported": val("importedCar"),
+        "insurance_valid_until": val("insuranceValidity"),
+        "inspection_valid_until": val("inspectionValidity"),
+        "inspections": len(inspections),
+        "failed_inspections": len(failed),
+        "first_registration_abroad": abroad,
+        "first_registration_pl": in_pl,
+        "events": len(tl),
+    }
+
+
 def parse_detail(html: str) -> dict | None:
     pp = next_data(html)["props"]["pageProps"]
     ad = pp.get("advert")
@@ -117,6 +143,7 @@ def parse_detail(html: str) -> dict | None:
         "photos": photos,
         "active": (ad.get("status") or "ACTIVE") == "ACTIVE",
         "equipment": equipment,
+        "cepik": parse_cepik(pp),
     }
 
 
